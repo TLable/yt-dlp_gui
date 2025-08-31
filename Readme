@@ -1,0 +1,170 @@
+\# YouTube Downloader GUI
+
+
+
+A user-friendly desktop application for Windows that provides a graphical interface for downloading YouTube videos and playlists as either MP3 audio or MP4 video. This application acts as a visual wrapper for the powerful `yt-dlp` command-line tool, making it easy for users to manage their downloads without needing to use the terminal.
+
+
+
+\## Features
+
+
+
+\*   \*\*Multiple Download Formats:\*\* Download videos as high-quality MP4 or extract the audio as MP3.
+
+\*   \*\*Single Video and Playlist Support:\*\* Paste a URL for a single video or an entire playlist to download them all at once.
+
+\*   \*\*Customizable Download Locations:\*\* Choose and save your preferred folders for music and video downloads.
+
+\*   \*\*User-Friendly Interface:\*\* A clean and intuitive GUI with clear buttons for each download option.
+
+\*   \*\*Visual Feedback:\*\* A progress bar provides real-time feedback on your downloads.
+
+\*   \*\*Customizable UI:\*\*
+
+    ;   \*   \*\*Dark and Light Modes:\*\* Switch between a dark and light theme to suit your preference.
+
+    ;   \*   \*\*Layout Options:\*\* Arrange the main buttons horizontally, vertically, or in a square grid.
+
+    ;   \*   \*\*Minimal Mode:\*\* Hide the icons for a cleaner, text-only button layout.
+
+\*   \*\*Background Music:\*\* Enjoy some background music while using the application (can be muted).
+
+\*   \*\*Download Completion Alerts:\*\* Set a custom sound to play when a download is finished.
+
+\*   \*\*Update Checker:\*\* A built-in option to check for the latest versions of `yt-dlp`.
+
+
+
+\## Screenshots
+
+
+
+\*(Here you can add screenshots of your application in action. For example, show the main window in both light and dark mode.)\*
+
+
+
+\*\*Dark Mode:\*\*
+
+!\[Dark Mode Screenshot](placeholder\_dark.png)
+
+
+
+\*\*Light Mode:\*\*
+
+!\[Light Mode Screenshot](placeholder\_light.png)
+
+
+
+\## Requirements
+
+
+
+To run this application, you will need the following installed on your system:
+
+
+
+\*   \[Python 3](https://www.python.org/downloads/)
+
+\*   \[yt-dlp](https://github.com/yt-dlp/yt-dlp): The core command-line tool for downloading.
+
+\*   The following Python libraries:
+
+    ;   \*   `pygame`
+
+    ;   \*   `playsound`
+
+    ;   \*   `Pillow` (PIL Fork)
+
+    ;   \*   `yt-dlp`
+
+
+
+\## Installation
+
+
+
+1\.  \*\*Clone the repository:\*\*
+
+    ;   ```bash
+
+    ;   git clone https://github.com/your-username/your-repository-name.git
+
+    ;   cd your-repository-name
+
+    ;   ```
+
+
+
+2\.  \*\*Install the required Python libraries:\*\*
+
+    ;   ```bash
+
+    ;   pip install pygame playsound Pillow yt-dlp
+
+    ;   ```
+
+
+
+\## Usage
+
+
+
+1\.  Run the application by executing the Python script:
+
+    ;   ```bash
+
+    ;   python your\_script\_name.py
+
+    ;   ```
+
+    ;   \*(Replace `your\_script\_name.py` with the actual name of your Python file.)\*
+
+
+
+2\.  Click on one of the four main buttons:
+
+    ;   \*   \*\*Download as MP3:\*\* For a single audio file.
+
+    ;   \*   \*\*Download as MP4:\*\* For a single video file.
+
+    ;   \*   \*\*Download Playlist > MP3:\*\* For an entire playlist as audio files.
+
+    ;   \*   \*\*Download Playlist > MP4:\*\* For an entire playlist as video files.
+
+
+
+3\.  A dialog box will appear. Paste the YouTube URL of the video or playlist you want to download and click "OK".
+
+
+
+4\.  The download will begin, and you can monitor its progress with the progress bar at the bottom of the window.
+
+
+
+\### Configuration
+
+
+
+\*   \*\*Download Paths:\*\* Use the `File` menu to set the default directories for your music (MP3) and video (MP4) downloads. These settings are saved in a `config.json` file.
+
+\*   \*\*Alert Sound:\*\* You can set a custom `.mp3` or `.wav` file to play as an alert when downloads are complete via the `File` menu.
+
+\*   \*\*UI Customization:\*\* Use the `Edit` menu to toggle Dark Mode, Minimal Mode, and change the window layout.
+
+
+
+\## Contributing
+
+
+
+Contributions are welcome! If you have suggestions for improvements or find any bugs, please feel free to open an issue or submit a pull request.
+
+
+
+\## License
+
+
+
+This project is licensed under the \[MIT License](LICENSE). \*(You will need to create a `LICENSE` file in your repository and choose a license. The MIT License is a popular choice for open-source projects.)\*
+
