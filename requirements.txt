@@ -1,0 +1,9 @@
+# Core GUI toolkit (already in stdlib, but kept for clarity)
+tk==0.1.0   # <-- optional: not needed actually
+
+# Pillow – we use it to resize PNGs with high quality
+pillow==10.3.0
+
+# If you ever need other packages, add them here:
+# requests==2.32.0
+# numpy>=1.26,<1.27
