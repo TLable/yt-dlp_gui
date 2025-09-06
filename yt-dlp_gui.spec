@@ -4,8 +4,8 @@ import sys, os
 block_cipher = None
 
 a = Analysis(
-    ['yt-dlpGUI.py'],
-    pathex=['C:\\Users\\Logan\\Documents\\yt-dlp'],   # <-- your source folder
+    ['yt-dlp_gui.py'],
+    pathex=['%USERPROFILE%\\Documents\\yt-dlp'],   # <-- your source folder
     binaries=[],
     datas=[
         ('requirements.txt', '.'), 
@@ -44,7 +44,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=False,          # embed binaries correctly
-    name='yt-dlpGUI',
+    name='yt-dlp_gui',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -64,6 +64,7 @@ coll = COLLECT(
 # At the bottom of yt-dlpGUI.spec
 app = BUNDLE(
     coll,
-    name='yt-dlpGUI',
+    name='yt-dlp_gui',
     icon='yt download err Icons\\YouTube2Media1AV 2A.ico',
 )
+
