@@ -10,11 +10,14 @@ from tkinter import CENTER, Toplevel, Label, Button
 from tkinter import ttk, filedialog, messagebox
 import tkinter.simpledialog as simpledialog
 import tkinter.messagebox as messagebox
-from PIL import Image, ImageTk   # ✅ for resizing icons
+from PIL import Image, ImageTk, ImageSequence   # ✅ for resizing icons
 from urllib.parse import urlparse, parse_qs
 import pygame
-from playsound import playsound
 import yt_dlp as ytdlp
+import cairosvg
+from io import BytesIO
+import queue
+from queue import Queue, Empty
 
 # -----
 # NEW: THEME DEFINITIONS
@@ -49,12 +52,30 @@ light_theme = {
     "Progress_bar_green":"#57d221",
 }
 
-
-ICON_PATHS = [
+# Use the static SVGs for the default button icons.
+STATIC_PNG_PATHS = [
     "YouTube MP3 DL 1AV 4A.png",
     "YouTube MP4 DL 1AV 4A.png",
     "YouTube MP3 PL DL 1AV 4A.png",
     "YouTube MP4 PL DL 1AV 4A.png",
+]
+STATIC_SVG_PATHS = [
+    #"MP3.svg",
+    #"MP4.svg",
+    #"MP3_PL.svg",
+    #"MP4_PL.svg",    
+]
+
+
+# Use pre-converted animated GIFs for the downloading state.
+ANIMATED_GIF_PATHS = [
+    "MP3_animated.gif",
+    "MP4_animated.gif",
+    "MP3_PL_animated.gif",
+    "MP4_PL_animated.gif",
+]
+
+UI_ICON_PATHS = [
     "volume sldr Orange.png",                     # tiny knob image (you can use a PNG)
     "volume overlay Play Orange.png",
     "volume overlay Play Default.png",
@@ -63,12 +84,33 @@ ICON_PATHS = [
     "YouTube2Media1AV 2A.ico",
 ]
 
+#AVGifs = [
+ #   "MP3.svg", "MP3_animated.svg",
+ #   "MP3_PL.svg", "MP3_PL_animated.svg",
+ #   "MP4.svg", "MP4_animated.svg",
+ #   "MP4_PL.svg", "MP4_PL_animated.svg",
+#]
+
+#AVGifs = [
+#    "anim_YouTube_MP3.gif", "anim_YouTube_MP4.gif",
+#    "anim_YouTube_MP3PL.gif", "anim_YouTube_MP4PL.gif"
+#]
+
 # Global playlist trackingFQI
+APP_NAME    = "YouTube‑Downloader"
+APP_VERSION = "v0.0.152.0"        # ← change this when you release a new build
+active_button: Optional[tk.Button] = None # Will hold the button being animated
+is_animating = False
+gif_frames: dict[int, list[ImageTk.PhotoImage]] = {}
+manual_playlist_index = 1
 current_index = 1
 current_playlist_count = 1
 custom_toolbar = None
 custom_toolbar: Optional[tk.Frame] = None
 last_download_path: Optional[str] = None
+current_is_video = False
+current_base_dir = ""
+is_audio_enabled = False
 button_images_refs: list[ImageTk.PhotoImage] = []
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), "config.json")
 ICON_FOLDER = "yt download err Icons"
@@ -77,8 +119,6 @@ _resize_save_job = None # For saving window geometry
 # -------------
 # 1️⃣ Global application metadata
 # -------------
-APP_NAME    = "YouTube‑Downloader"
-APP_VERSION = "v0.0.143.1"        # ← change this when you release a new build
 
 # -------------
 # Helpers – path handling for a bundled executable
@@ -98,15 +138,14 @@ def _resource_path(relative_path: str) -> str:
     full_path = base_path / relative_path
     return str(full_path)
 
-music_file = _resource_path("playsound/No Copyright Come With Me (Creative Commons).mp3")
+music_file = _resource_path("playmusic/No Copyright Come With Me (Creative Commons) deep house.mp3")
+
 ALERT_SOUND_FILE: str | None = _resource_path("sounds/Coin Win.mp3")
 music_muted = False
-
-# -------------
-# 1️⃣ Build the correct download directory
-# -------------
-MUSIC_DIR = os.path.expandvars(r"%USERPROFILE%\Music")
-VIDEO_DIR = os.path.expandvars(r"%USERPROFILE%\Videos")
+MUSIC_DIR = os.path.expandvars(r"%USERPROFILE%\Music\0A. Download (C) MP3 Stream\YouTube")
+VIDEO_DIR = os.path.expandvars(r"%USERPROFILE%\Videos\0A. Download (C) MP4 Stream\YouTube")
+ico_filename = UI_ICON_PATHS[-1]
+icon_path = _resource_path(os.path.join(ICON_FOLDER, ico_filename))
 
 def load_config():
     global MUSIC_DIR, VIDEO_DIR, ALERT_SOUND_FILE, max_resolution
@@ -181,9 +220,11 @@ def save_window_geometry():
         last_window_w.set(int(w))
         last_window_h.set(int(h))
     if "+" in geom:
-        _, x, y = geom.replace("x", "+").split("+")
-        last_window_x.set(int(x))
-        last_window_y.set(int(y))
+        position_parts = pos.split("+")
+        if len(position_parts) == 2:
+            x, y = position_parts
+            last_window_x.set(int(x))
+            last_window_y.set(int(y))
 
     # Save values
     data.update({
@@ -272,6 +313,29 @@ def load_window_geometry():
         print("[DEBUG] No valid window geometry found. Using default.")
         root.geometry(window_geometry.get())
 
+# --- NEW: Robust Audio Initialization ---
+def initialize_audio():
+    """
+    Initializes the main pygame module and its mixer.
+    This should be called only ONCE at the start of the application.
+    Returns True on success, False on failure.
+    """
+    try:
+        print("[DEBUG] Initializing Pygame...")
+        pygame.init()
+        print("[DEBUG] Initializing Pygame Mixer...")
+        pygame.mixer.init()
+        print("[DEBUG] Audio systems initialized successfully.")
+        return True
+    except Exception as e:
+        print(f"!!!!!!!!!!!!!! PYGAME AUDIO FAILED TO INITIALIZE !!!!!!!!!!!!!!")
+        print(f"ERROR: {e}")
+        print(f"Audio will be disabled.")
+        return False
+
+# --- Global flag to track audio status ---
+is_audio_enabled = False
+
 # -------------
 # Music player – uses pygame.mixer for MP3 looping & mute support
 # -------------
@@ -282,7 +346,9 @@ class LoopingMusicPlayer:
         self.is_paused = False
         self.pause_pos = 0  # store position in seconds
         self.volume = 0.5   # default starting volume
-
+        self.is_loaded = False
+        
+            
         if not pygame.mixer.get_init():
             try:
                 pygame.mixer.init()
@@ -290,18 +356,29 @@ class LoopingMusicPlayer:
                 print(f"⚠️ Could not init mixer: {e}")
                 return
 
+        # --- MODIFIED: Check if audio is enabled before proceeding ---
+        if not is_audio_enabled:
+            print("[DEBUG] Audio is disabled, LoopingMusicPlayer will not initialize.")
+            return
+
         try:
+            print(f"[DEBUG] Attempting to load music file: {mp3_file}")
             pygame.mixer.music.load(str(mp3_file))
+            self.is_loaded = True # --- NEW: Set flag to True on success ---
+            print("[DEBUG] Music file loaded successfully.")
         except Exception as e:
-            print(f"⚠️ Could not load music: {e}")
+            # --- IMPROVED: This will now print the REAL error (e.g., file not found) ---
+            print(f"⚠️ Could not load music file. ERROR: {e}")
+            self.is_loaded = False
 
     def start(self) -> None:
-        if self.is_muted:
+        if self.is_muted or not self.is_loaded:
+            if not self.is_loaded:
+                print("[DEBUG] Playback aborted: music file was not loaded.")
             return
         try:
             pygame.mixer.music.play(-1)
             self.is_paused = False
-            #self.pause_pos = 0
         except Exception as e:
             print(f"⚠️ Could not play music: {e}")
 
@@ -336,12 +413,6 @@ class LoopingMusicPlayer:
             self.stop()           # stop playback
         self.is_muted = not self.is_muted
 
-# -------------
-# Icon - Application window icon helper
-# -------------
-ico_filename = ICON_PATHS[-1]
-icon_path = _resource_path(os.path.join(ICON_FOLDER, ico_filename))
-
 def _load_pause_icon(icon_name: str = "media playback pause orange.png",
                      size=(20, 20)) -> ImageTk.PhotoImage:
     """
@@ -370,6 +441,146 @@ def apply_window_icon(win: tk.Tk | tk.Toplevel):
             win.tk.call('wm', 'iconphoto', win._w, img)
         except Exception as e:
             print(f"⚠️ Could not set icon: {e}")
+
+# For thread-safe communication between yt-dlp hook and GUI
+gui_queue = Queue()
+
+# Cache for loaded GIF frames to prevent reloading
+gif_frames_cache = {}
+
+def load_png_icon(path, button_size, theme_color):
+    """
+    Loads a static PNG, resizes it to a square, and pastes it onto a
+    theme-colored background matching the button's final size.
+    """
+    try:
+        full_path = _resource_path(os.path.join(ICON_FOLDER, path))
+        source_icon = Image.open(full_path).convert("RGBA")
+
+        # 1. Calculate a target SQUARE size for the icon (e.g., 70% of the smaller dimension)
+        min_dimension = min(button_size)
+        target_size = int(min_dimension * 0.7)
+        if target_size < 1: return None
+
+        # 2. Resize the source icon to the target square size
+        resized_icon = source_icon.resize((target_size, target_size), Image.Resampling.LANCZOS)
+
+        # 3. Create a new background canvas with the button's true dimensions and theme color
+        background = Image.new("RGBA", button_size, theme_color)
+        
+        # 4. Calculate coordinates to paste the icon in the center
+        paste_x = (button_size[0] - target_size) // 2
+        paste_y = (button_size[1] - target_size) // 2
+
+        # 5. Paste the resized icon onto the background
+        background.paste(resized_icon, (paste_x, paste_y), resized_icon)
+
+        return ImageTk.PhotoImage(background)
+    except Exception as e:
+        print(f"Error loading PNG {path}: {e}")
+        return ImageTk.PhotoImage(Image.new('RGBA', button_size, (0, 0, 0, 0)))
+
+def load_gif_frames(path, button_size, theme_color):
+    """
+    Loads all frames from a GIF, resizes each to a square, and pastes it
+    onto a theme-colored background for centered, non-distorted animation.
+    """
+    full_path = _resource_path(os.path.join(ICON_FOLDER, path))
+    
+    # Use a cache key that includes size and color to avoid incorrect re-use
+    cache_key = (full_path, button_size, theme_color)
+    if cache_key in gif_frames_cache:
+        return gif_frames_cache[cache_key]
+        
+    try:
+        gif = Image.open(full_path)
+        
+        # 1. Calculate a target SQUARE size for the icon frames
+        min_dimension = min(button_size)
+        target_size = int(min_dimension * 0.7)
+        if target_size < 1: return []
+
+        # 2. Calculate coordinates for centering (this is constant for all frames)
+        paste_x = (button_size[0] - target_size) // 2
+        paste_y = (button_size[1] - target_size) // 2
+        
+        final_frames = []
+        for frame in ImageSequence.Iterator(gif):
+            # 3. Create the background canvas for this frame
+            background = Image.new("RGBA", button_size, theme_color)
+            
+            # 4. Resize the raw GIF frame to the target square size
+            resized_frame = frame.convert('RGBA').resize((target_size, target_size), Image.Resampling.LANCZOS)
+            
+            # 5. Paste the frame onto the canvas
+            background.paste(resized_frame, (paste_x, paste_y), resized_frame)
+            
+            final_frames.append(ImageTk.PhotoImage(background))
+
+        gif_frames_cache[cache_key] = final_frames
+        return final_frames
+    except Exception as e:
+        print(f"Error loading GIF {path}: {e}")
+        return []
+
+def animate_button(widget, frames, frame_index=0):
+    """Recursively updates the widget's image to play the GIF animation."""
+    if not getattr(widget, 'is_animating', False):
+        return  # Stop the loop if the animation flag has been turned off
+
+    widget.config(image=frames[frame_index])
+    next_index = (frame_index + 1) % len(frames)
+    # Schedule the next frame update
+    widget.after_id = widget.after(50, animate_button, widget, frames, next_index)
+
+def start_animation_on_button(button_index):
+    """Begins the animation for a specific button by its index."""
+    print(f"[DEBUG] Called start_animation_on_button for index: {button_index}")
+    theme = dark_theme if dark_mode.get() else light_theme
+    button = grid_frame.winfo_children()[button_index]
+    if getattr(button, 'is_animating', False): return # Already animating
+    if hasattr(button, 'is_animating') and button.is_animating:
+        print("[DEBUG] Button is already animating. Aborting.")
+        return
+
+    button.is_animating = True
+    icon_size = (button.winfo_width(), button.winfo_height())
+    frames = load_gif_frames(ANIMATED_GIF_PATHS[button_index], icon_size, theme["button_bg"])
+    print(f"[DEBUG] Button size for animation is: {icon_size}")
+    if frames:
+        print(f"[DEBUG] Successfully loaded {len(frames)} frames. Starting animation.")
+        if not hasattr(button, 'static_icon'):
+             button.static_icon = button.cget("image") # Save the static SVG icon
+        animate_button(button, frames)
+    else:
+        # --- DEBUG: This will tell us if the GIF failed to load ---
+        print("[DEBUG] FAILED to load GIF frames. Animation cannot start.")
+
+def stop_animation_on_button(button_index):
+    """Stops the animation and restores the original static SVG icon."""
+    if button_index >= len(grid_frame.winfo_children()): return
+    button = grid_frame.winfo_children()[button_index]
+    button.is_animating = False
+    if hasattr(button, 'after_id'):
+        button.after_cancel(button.after_id)
+    if hasattr(button, 'static_icon'):
+        button.config(image=button.static_icon)
+
+def check_gui_queue():
+    """Main GUI loop function to check for messages from the download thread."""
+    if not gui_queue.empty():
+        try:
+            message, button_index = gui_queue.get(block=False)
+            print(f"[DEBUG] RECEIVED message from queue: '{message}' for button {button_index}")
+            if message == 'start_animation':
+                start_animation_on_button(button_index)
+            elif message == 'stop_animation':
+                stop_animation_on_button(button_index)
+        except queue.Empty: # <--- This is the error
+            pass
+
+    # Always schedule the next check
+    root.after(100, check_gui_queue)
 
 # -------------
 # Custom Askstring Dialog (The reliable replacement)
@@ -453,6 +664,131 @@ def custom_askstring(title: str, prompt: str, parent: tk.Tk) -> Optional[str]:
 
     return result[0]
 
+# --- ANIMATION AND BUTTON HANDLING ---
+def load_gifs():
+    """Pre-loads all GIF frames into memory for efficient animation."""
+    for idx, gif_name in enumerate(ANIMATED_GIF_PATHS):
+        gif_path = _resource_path(os.path.join(ICON_FOLDER, gif_name))
+        if os.path.exists(gif_path):
+            frames = []
+            with Image.open(gif_path) as gif:
+                for frame in ImageSequence.Iterator(gif):
+                    # Ensure frame has transparency support
+                    frames.append(frame.copy().convert("RGBA"))
+            gif_frames[idx] = frames
+
+def start_button_animation(button: tk.Button, button_index: int):
+    """
+    FIX: Replaces button PNG with a resized, animated GIF.
+    """
+    global active_button, is_animating
+    if is_animating or button_index not in gif_frames:
+        return
+
+    is_animating = True
+    active_button = button
+    
+    # Store the original static image if it doesn't exist yet
+    if not hasattr(button, 'original_img'):
+        button.original_img = button.cget("image")
+        
+    frames = gif_frames[button_index]
+    
+    def update_frame(idx=0):
+        if is_animating and active_button == button:
+            frame_image = frames[idx]
+            theme = dark_theme if dark_mode.get() else light_theme
+            # Continue looping only if the animation flag is set for this specific button
+            #if not is_animating or active_button != button:
+            #    return # Exit the loop cleanly.
+            # Resize the GIF frame to fit the current button size while maintaining aspect ratio
+            #frame_image = frames[idx]
+            
+            # --- Use the exact same resizing logic as thumbnail_for_button ---
+            btn_size = min(button.winfo_width(), button.winfo_height())
+            if btn_size > 1:
+                # Calculate target size
+                target_size = max(min(int(btn_size * 0.7), btn_size - ICON_PADDING), 1)
+                
+                # Resize the current GIF frame
+                resized_frame = frame_image.resize((target_size, target_size), Image.LANCZOS)
+                
+                # Paste it onto a theme-colored background to ensure it's centered
+                new_image = Image.new("RGBA", (button.winfo_width(), button.winfo_height()), theme["button_bg"])
+                paste_x = (button.winfo_width() - target_size) // 2
+                paste_y = (button.winfo_height() - target_size) // 2
+                new_image.paste(resized_frame, (paste_x, paste_y), resized_frame)
+                
+                photo_image = ImageTk.PhotoImage(new_image)
+                
+                button.config(image=photo_image)
+                button.image = photo_image # Keep reference
+            
+            root.after(50, update_frame, (idx + 1) % len(frames))
+
+    # Give the button a moment to draw before starting animation
+    root.after(20, update_frame)
+    
+#def start_button_animation(button: tk.Button, button_index: int):
+#    """
+#    FIX: Replaces button PNG with a properly sized and centered animated GIF.
+#    """
+#    global active_button, is_animating
+#    if is_animating or button_index not in gif_frames:
+#        return
+
+#    is_animating = True
+#    active_button = button
+    
+#    # Store the original static image if it doesn't exist yet
+#    if not hasattr(button, 'original_img'):
+#        button.original_img = button.cget("image")
+        
+#    frames = gif_frames[button_index]
+    
+#    def update_frame(idx=0):
+#        # Continue looping only if the animation flag is set for this specific button
+#        if is_animating and active_button == button:
+#            # Resize the GIF frame to fit the current button size while maintaining aspect ratio
+#            frame_image = frames[idx]
+#            
+#            # Calculate the target size, similar to thumbnail_for_button
+#            btn_w, btn_h = button.winfo_width(), button.winfo_height()
+#            if btn_w > 1 and btn_h > 1:
+#                target_size = int(min(btn_w, btn_h) * 0.7)
+#                resized_frame = frame_image.resize((target_size, target_size), Image.LANCZOS)
+                
+#                # Create a new blank image with the button's background color
+#                theme = dark_theme if dark_mode.get() else light_theme
+#                new_image = Image.new("RGBA", (btn_w, btn_h), theme["button_bg"])
+                
+#                # Paste the resized frame into the center of the new image
+#                paste_x = (btn_w - target_size) // 2
+#                paste_y = (btn_h - target_size) // 2
+#                new_image.paste(resized_frame, (paste_x, paste_y), resized_frame)
+                
+#                photo_image = ImageTk.PhotoImage(new_image)
+                
+#                button.config(image=photo_image)
+#                button.image = photo_image # Keep a reference to prevent garbage collection
+            
+#            root.after(50, update_frame, (idx + 1) % len(frames))
+
+#    # Give the button a moment to draw before starting animation
+#    root.after(20, update_frame)
+
+def stop_button_animation():
+    """Stops the current GIF animation and restores the original PNG image."""
+    global is_animating, active_button
+    if not is_animating or not active_button:
+        return
+        
+    is_animating = False
+    if hasattr(active_button, 'original_img') and active_button.original_img:
+        active_button.config(image=active_button.original_img)
+    
+    active_button = None
+
 if pygame and os.path.exists(music_file):
     player = LoopingMusicPlayer(music_file)
     threading.Thread(target=lambda: (time.sleep(5), player.start()), daemon=True).start()
@@ -524,6 +860,9 @@ def play_alert_sound():
     """Play the alert sound if one is set, matching player volume."""
     if not ALERT_SOUND_FILE:
         return
+    # --- MODIFIED: Check if audio is enabled ---
+    if not is_audio_enabled or not ALERT_SOUND_FILE:
+        return
     try:
         # Load with pygame instead of playsound (allows volume control)
         alert = pygame.mixer.Sound(ALERT_SOUND_FILE)
@@ -560,9 +899,9 @@ def _is_playlist(url: str) -> bool:
         # If anything goes wrong (e.g. an empty string) we treat it as *not* a playlist
         return False
 
-background_label: Optional[tk.Label] = None
-background_image: Optional[ImageTk.PhotoImage] = None
-background_item_id: Optional[int] = None
+#background_label: Optional[tk.Label] = None
+#background_image: Optional[ImageTk.PhotoImage] = None
+#background_item_id: Optional[int] = None
 
 block_cipher = None
 
@@ -714,6 +1053,7 @@ def _base_cmd(url: str, *, playlist_title: bool = False,
 # 2️⃣ Public “builder” functions – one line each
 # -------------
 def build_cmd_single_mp3(url: str) -> List[str]:
+    
     """Download a single video as MP3 to the static Music folder."""
     return _base_cmd(url, playlist_title=False, video=False)
 
@@ -858,9 +1198,9 @@ def show_success_message(path: Optional[str]):
         
         if current_index == current_playlist_count and current_playlist_count > 1:
             cleanup_empty_playlist_dir(current_base_dir, "%(playlist_title,sanitize)s")
+        # Play only your custom alert sound
+        play_alert_sound()
 
-    # Play only your custom alert sound
-    play_alert_sound()
     root.after(0, _popup)
 
 def show_error_message(error: Exception):
@@ -868,7 +1208,7 @@ def show_error_message(error: Exception):
     if not show_messages_var.get():
         return
 
-    err_msg = f"An error occurred:\n\n{str(error)}"
+    err_msg = f"An error occurred:\n\n{str(error)}", stop_button_animation()
 
     def _popup():
         win = tk.Toplevel(root)
@@ -975,7 +1315,7 @@ minimal_mode = tk.BooleanVar(value=False)
 orientation = tk.StringVar(value="Horizontal")
 max_resolution = tk.StringVar(value="1440") # <-- ADD THIS LINE (default to 1080p)
 show_messages_var = tk.BooleanVar(value=True)
-background_label: Optional[tk.Label] = None
+#background_label: Optional[tk.Label] = None
 
 # Bind the resize/move event handler
 root.bind("<Configure>", schedule_geometry_save, add="+")  # track size/move
@@ -1025,18 +1365,18 @@ bg_label.lower()  # ensure it's always behind widgets
 # -------------
 # Load and resize the background only once
 # -------------
-def load_background(path: str, max_size=(600, 400)) -> ImageTk.PhotoImage:
-    """Return a PhotoImage that fits within `max_size`."""
-    img = Image.open(_resource_path(path))
+#def load_background(path: str, max_size=(600, 400)) -> ImageTk.PhotoImage:
+#    """Return a PhotoImage that fits within `max_size`."""
+#    img = Image.open(_resource_path(path))
 
     # Preserve aspect ratio – use thumbnail or fit.
-    img.thumbnail(max_size, Image.LANCZOS)          # keeps the image small
+#    img.thumbnail(max_size, Image.LANCZOS)          # keeps the image small
+#
+#    return ImageTk.PhotoImage(img, master=root)#
 
-    return ImageTk.PhotoImage(img, master=root)
+#bg_photo = load_background(os.path.join(ICON_FOLDER, "YT-dl Default_Background.jpg"))
 
-bg_photo = load_background(os.path.join(ICON_FOLDER, "YT-dl Default_Background.jpg"))
-
-background_label: Optional[tk.Label] = None
+#background_label: Optional[tk.Label] = None
 
 # -------------
 # 1️⃣ Progress bar + centered text label
@@ -1089,8 +1429,17 @@ def set_progress(value: float) -> None:
 # -------------
 def on_progress(d):
     global manual_playlist_index, current_index, last_download_path
+    thread_obj = threading.current_thread()
+    if d['status'] == 'downloading' and not getattr(thread_obj, 'animation_started', False):
+        print(f"[DEBUG] theread downloading - Hook received status: {d.get('status')}")
+        button_index = getattr(thread_obj, 'button_index', -1)
+        if button_index != -1:
+            print(f"[DEBUG] SENDING 'start_animation' message for button {button_index}")
+            gui_queue.put(('start_animation', button_index))
+            thread_obj.animation_started = True # Set flag to prevent sending again
     status = d.get("status")
     if not current_is_video and status in ("postprocess_finished"):
+        print(f"[DEBUG] postprocess_finished - Hook received status: {d.get('status')}")
         # This is the final mp3 or muxed mp4
         finished_filename = d.get("info_dict", {}).get("filepath") or d.get("filename", "")
         if finished_filename:
@@ -1100,6 +1449,7 @@ def on_progress(d):
             
     # --- MP4 logic (works correctly for videos in older version) ---
     elif current_is_video and status == "finished":
+        print(f"[DEBUG] finished - Hook received status: {d.get('status')}")
         finished_filename = d.get("info_dict", {}).get("filepath") or d.get("filename", "")
 
         target_extension = ".mp4"
@@ -1121,6 +1471,7 @@ def on_progress(d):
         theme = dark_theme if dark_mode.get() else light_theme
 
         if status == "downloading":
+            print(f"[DEBUG] downloading - Hook received status: {d.get('status')}")
             total = d.get("total_bytes") or d.get("total_bytes_estimate")
             downloaded = d.get("downloaded_bytes", 0)
             if total:
@@ -1136,8 +1487,10 @@ def on_progress(d):
                     text=f"Working {current_index}/{current_playlist_count}",
                     bg=theme["bg"], fg=theme["fg"]
                 )
+                print(f"[DEBUG] Working - Hook received status: {d.get('status')}")
 
         elif status == "postprocess_finished":
+            print(f"[DEBUG] GUI postprocess_finished - Hook received status: {d.get('status')}")
             progress["value"] = 100
             progress_text.config(
                 text=f"Done {current_index}/{current_playlist_count}",
@@ -1156,45 +1509,45 @@ def reset_progress_bar():
     theme = dark_theme if dark_mode.get() else light_theme
     progress_text.config(text="", bg=theme["bg"])
 
-def run_dl(url, ydl_opts, is_video=False, playlist_title=None):
-    job_is_video = is_video
-    job_playlist_title = playlist_title
-    try:
-        progress_text.config(text="Working")
-        with ytdlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([url])
-        progress_text.config(text="Done")
+#def run_dl(url, ydl_opts, is_video=False, playlist_title=None):
+#    job_is_video = is_video
+#    job_playlist_title = playlist_title
+#    try:
+#        progress_text.config(text="Working")
+#        with ytdlp.YoutubeDL(ydl_opts) as ydl:
+#            ydl.download([url])
+#        progress_text.config(text="Done")
 
-        # cleanup empty playlist folder if necessary
-        if job_playlist_title:
-            cleanup_empty_playlist_dir(
-                VIDEO_DIR if job_is_video else MUSIC_DIR,
-                job_playlist_title
-            )
+#       # cleanup empty playlist folder if necessary
+#        if job_playlist_title:
+#            cleanup_empty_playlist_dir(
+#                VIDEO_DIR if job_is_video else MUSIC_DIR,
+#                job_playlist_title
+#            )
 
-        # clear text after 5 seconds
-        root.after(5000, lambda: progress_text.config(text=""))
-    except Exception as e:
-        messagebox.showerror("Download error", str(e))
-    finally:
-        # Reset progress bar if something goes wrong
-        progress["value"] = 0
+#        # clear text after 5 seconds
+#        root.after(5000, lambda: progress_text.config(text=""))
+#    except Exception as e:
+#        messagebox.showerror("Download error", str(e))
+#    finally:
+#        # Reset progress bar if something goes wrong
+#        progress["value"] = 0
 
-def hide_progress_text() -> None:
-    progress_text.config(text="")
+#def hide_progress_text() -> None:
+#    progress_text.config(text="")
 
-def start_progress():
-    global current_index, current_playlist_count
-    progress["value"] = 0
-    progress.start(10)  # animate
-    show_progress_text(f"Working {current_index}/{current_playlist_count}")
-    root.after(3000, stop_progress)  # simulate work for 3 sec
+#def start_progress():
+#    global current_index, current_playlist_count
+#    progress["value"] = 0
+#    progress.start(10)  # animate
+#    show_progress_text(f"Working {current_index}/{current_playlist_count}")
+#    root.after(3000, stop_progress)  # simulate work for 3 sec
 
-def stop_progress():
-    global current_index, current_playlist_count
-    progress.stop()
-    progress["value"] = 100
-    show_progress_text(f"Done {current_index}/{current_playlist_count}")
+#def stop_progress():
+#    global current_index, current_playlist_count
+#   progress.stop()
+#    progress["value"] = 100
+#    show_progress_text(f"Done {current_index}/{current_playlist_count}")
 
 # -------------
 # 2️⃣ Geometry configuration for the container
@@ -1289,7 +1642,7 @@ def create_volume_overlay(root, player: LoopingMusicPlayer):
         if not playback_icon_photos:
             pause_button.config(
                 text="▶" if player.is_paused else "⏸",
-                fg=theme["accent"],
+                fg=theme["volume_slider_accent"],
                 font=("Arial", 12)
             )
             return
@@ -1448,65 +1801,65 @@ if os.name == "nt" and os.path.exists(icon_path):
 # -------------
 # Background Image Logic – always behind everything (label‑based)
 # -------------
-def set_background_image() -> None:
-    """Ask user for an image and place it as a full‑window background."""
-    global background_label, background_image  # keep the PhotoImage alive
+#def set_background_image() -> None:
+#    """Ask user for an image and place it as a full‑window background."""
+#    global background_label, background_image  # keep the PhotoImage alive
 
-    file_path = filedialog.askopenfilename(
-        title="Choose background image",
-        filetypes=[
-            ("Image files", "*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.tiff;*.webp")
-        ]
-    )
-    if not file_path:
-        return
+#    file_path = filedialog.askopenfilename(
+#        title="Choose background image",
+#        filetypes=[
+#            ("Image files", "*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.tiff;*.webp")
+#        ]
+#    )
+#    if not file_path:
+#        return
 
-    try:
-        # Load the original image once
-        orig_img = Image.open(file_path)
+#    try:
+#        # Load the original image once
+#        orig_img = Image.open(file_path)
 
-        # 1️⃣ Cache for resized images – key is (width, height)
-        cached_images: dict[tuple[int, int], ImageTk.PhotoImage] = {}
+#        # 1️⃣ Cache for resized images – key is (width, height)
+#        cached_images: dict[tuple[int, int], ImageTk.PhotoImage] = {}
 
-        def _draw(event=None):
-            """Resize the image to fit the current window size."""
-            global background_image
-            w, h = root.winfo_width(), root.winfo_height()
-            if w <= 1 or h <= 1:
-                return
+#        def _draw(event=None):
+#            """Resize the image to fit the current window size."""
+#            global background_image
+#            w, h = root.winfo_width(), root.winfo_height()
+#            if w <= 1 or h <= 1:
+#                return
 
-            key = (w, h)
-            if key not in cached_images:
-                resized = orig_img.resize((w, h), Image.LANCZOS)
-                cached_images[key] = ImageTk.PhotoImage(resized)
+#            key = (w, h)
+#            if key not in cached_images:
+#                resized = orig_img.resize((w, h), Image.LANCZOS)
+#                cached_images[key] = ImageTk.PhotoImage(resized)
 
-            background_image = cached_images[key]
-            # update the label’s image
-            background_label.configure(
-                image=background_image,
-                bg=root.cget("bg")          # <‑‑ use the same colour as the root
-            )
-        def schedule_resize(event=None):
-            """Debounce the <Configure> event so we don’t redraw too often."""
-            if hasattr(root, "_resize_after"):
-                root.after_cancel(root._resize_after)
-            root._resize_after = root.after(30, _draw)
+#            background_image = cached_images[key]
+#            # update the label’s image
+#            background_label.configure(
+#                image=background_image,
+#                bg=root.cget("bg")          # <‑‑ use the same colour as the root
+#            )
+#        def schedule_resize(event=None):
+#            """Debounce the <Configure> event so we don’t redraw too often."""
+#            if hasattr(root, "_resize_after"):
+#                root.after_cancel(root._resize_after)
+#            root._resize_after = root.after(30, _draw)
 
-        # 2️⃣ Create the label that will hold the image (if it doesn’t exist yet)
-        if not background_label:
-            background_label = tk.Label(root, bd=0)          # no border
-            background_label.place(x=0, y=0, relwidth=1, relheight=0)
+#        # 2️⃣ Create the label that will hold the image (if it doesn’t exist yet)
+#        if not background_label:
+#            background_label = tk.Label(root, bd=0)          # no border
+#            background_label.place(x=0, y=0, relwidth=1, relheight=0)
 
-        # 3️⃣ Send the label to the back so all widgets appear on top
-        background_label.lower()
+#        # 3️⃣ Send the label to the back so all widgets appear on top
+#        background_label.lower()
 
-        # 4️⃣ Bind resize handling and do an initial draw
-        root.bind("<Configure>", schedule_resize)
-        _draw()           # first paint
+#        # 4️⃣ Bind resize handling and do an initial draw
+#        root.bind("<Configure>", schedule_resize)
+#        _draw()           # first paint
 
 
-    except Exception as e:
-        messagebox.showerror("Background Error", f"Could not load image:\n{e}")
+ #   except Exception as e:
+ #       messagebox.showerror("Background Error", f"Could not load image:\n{e}")
 
 # -------------
 # Menu setup
@@ -1542,16 +1895,15 @@ def rebuild_buttons() -> None:
     theme = dark_theme if dark_mode.get() else light_theme
 
     # Reset all grid weights
-    for i in range(10):
-        grid_frame.rowconfigure(i, weight=0)
-        grid_frame.columnconfigure(i, weight=0)
+    for i in range(4): # Clear previous weights
+        grid_frame.rowconfigure(i, weight=0); grid_frame.columnconfigure(i, weight=0)
 
     vertical_padding = 1
 
     for idx, (label, builder) in enumerate(button_specs):
         # Base button kwargs from the theme dictionary
         btn_kwargs = {
-            "command": lambda b=builder: on_button_click(b),
+            "command": lambda b=builder, i=idx: on_button_click(b, i),
             "bg": theme["button_bg"],
             "fg": theme["button_fg"],
             "activebackground": theme["button_active_bg"],
@@ -1562,9 +1914,9 @@ def rebuild_buttons() -> None:
 
         # Minimal mode shows text only
         if minimal_mode.get():
-            btn_kwargs["text"] = label
+            btn.config(text=label)
         else:
-            photo = thumbnail_for_button(idx, MIN_BTN_SIZE)
+            photo = ImageTk.PhotoImage(Image.new('RGBA', (MIN_BTN_SIZE, MIN_BTN_SIZE)))
             if photo:
                 btn_kwargs["image"] = photo
                 btn_kwargs["compound"] = "center"
@@ -1575,6 +1927,12 @@ def rebuild_buttons() -> None:
         btn = tk.Button(grid_frame, **btn_kwargs)
         btn.grid_propagate(False)
 
+        # Store the original PNG (so we can restore later after showing a gif)
+        if "image" in btn_kwargs:
+            btn.original_img = btn_kwargs["image"]
+        else:
+            btn.original_img = None
+            
         # Placement based on orientation
         if choice == "Vertical":
             btn.grid(row=idx, column=0, sticky="nsew", padx=3, pady=vertical_padding)
@@ -1597,6 +1955,8 @@ def rebuild_buttons() -> None:
         for i in range(2):
             grid_frame.rowconfigure(i, weight=1)
             grid_frame.columnconfigure(i, weight=1)
+            
+    root.after(50, _resize_buttons)
 
 
 # -------------
@@ -1629,18 +1989,18 @@ menubar = tk.Menu(root)
 # -------------
 # Edit menu – add “Clear Background” command
 # -------------
-def clear_background() -> None:
-    """
-    Remove the current background image completely.
-    After calling this, the window will show its normal background colour
-    (black in dark‑mode, SystemButtonFace otherwise).
-    """
-    global background_label
+#def clear_background() -> None:
+#    """
+#    Remove the current background image completely.
+#    After calling this, the window will show its normal background colour
+#    (black in dark‑mode, SystemButtonFace otherwise).
+#    """
+#    global background_label
 
-    if background_label is not None:
-        # Destroy the label that contains the photo image
-        background_label.destroy()
-        background_label = None
+#    if background_label is not None:
+#        # Destroy the label that contains the photo image
+#        background_label.destroy()
+#        background_label = None
 
 # BooleanVar that syncs with the menu checkbutton
 is_music_mute = tk.BooleanVar(value=False)
@@ -1846,11 +2206,11 @@ menubar.add_cascade(label="Help", menu=help_menu)
 # -------------
 # Button handling
 # -------------
-def on_button_click(build_fn: callable):
+def on_button_click(build_fn: callable, button_index: int):
     global manual_playlist_index, current_index, current_playlist_count, current_base_dir, current_is_video
-    current_index = 1
-    current_playlist_count = 1
-    manual_playlist_index = 1 # This will be our reliable counter
+    #current_index = 1
+    #current_playlist_count = 1
+    #manual_playlist_index = 1 # This will be our reliable counter
     last_download_path = None
     url = custom_askstring(
         "YouTube URL",
@@ -1859,77 +2219,106 @@ def on_button_click(build_fn: callable):
     )
     if not url:
         return
+    # --- Start animation AFTER getting a valid URL ---
+    button = grid_frame.winfo_children()[button_index]
+    #start_button_animation(button, button_index)
+
+    
+    # Reset counters for the new job
+    manual_playlist_index, current_index, current_playlist_count = 1, 1, 1
+
+    if not _is_playlist(url) and build_fn.__name__.startswith("build_cmd_playlist"):
+        messagebox.showwarning("Wrong URL", "This is not a playlist link.", parent=root)
+
+    reset_progress_bar()
     current_is_video = build_fn.__name__.endswith("_mp4")
-    current_base_dir = VIDEO_DIR if current_is_video else MUSIC_DIR
-    cmd_options = build_fn(url.strip())
+    
+    #current_base_dir = VIDEO_DIR if current_is_video else MUSIC_DIR
+    # --- Build the complete ydl_opts dictionary HERE ---
 
     # Extract output template safely
-    try:
-        outtmpl_index = cmd_options.index("-o") + 1
-        outtmpl = cmd_options[outtmpl_index]
-    except (ValueError, IndexError):
-        if "playlist" in url.lower():
-            # Playlist buttons -> make folder for playlist
-            outtmpl = os.path.join(current_base_dir, "%(playlist_title)s", "%(title)s.%(ext)s")
-        else:
-            # Single file buttons -> save directly in MUSIC/VIDEO dir
-            outtmpl = os.path.join(current_base_dir, "%(title)s.%(ext)s")
-        reset_progress_bar()
-        progress_text.tkraise()
+    #try:
+    #    outtmpl_index = cmd_options.index("-o") + 1
+    #    outtmpl = cmd_options[outtmpl_index]
+    #except (ValueError, IndexError):
+    #    if "playlist" in url.lower():
+    #        # Playlist buttons -> make folder for playlist
+    #        outtmpl = os.path.join(current_base_dir, "%(playlist_title)s", "%(title)s.%(ext)s")
+    #    else:
+    #        # Single file buttons -> save directly in MUSIC/VIDEO dir
+    #        outtmpl = os.path.join(current_base_dir, "%(title)s.%(ext)s")
+    #    reset_progress_bar()
+    #    progress_text.tkraise()
     # --- yt-dlp options ---
-    ydl_opts = {
-        #"cookies": COOKIE_FILE,
-        "v": True,
-        "outtmpl": outtmpl,
-        "ignoreerrors": True,
-        "sponsorblock-remove": "sponsor",
-        "progress_hooks": [on_progress],
-        "embed-thumbnail": True,
-        "no-mtime": True,
-        "http_headers": {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36"},
-        "extractor-args": {"youtube": {"player_client": "web"}},
-    }
-    if current_is_video:
-        selected_height = max_resolution.get()
-        format_string = ( 
-            f"bestvideo[ext=mp4][height<={selected_height}]+bestaudio[ext=m4a]/best[ext=mp4]/best"
-        )
-        ydl_opts.update({
-            "format": format_string,
-            "merge_output_format": "mp4",
-        })
-    else:
-        ydl_opts.update({
-            "format": "bestaudio/best",
-            "postprocessors": [{"key":
-                "FFmpegExtractAudio",
-                "preferredcodec": "mp3",
-                "preferredquality": "192",
-            }],
-        })
-    if "_playlist" in build_fn.__name__: ydl_opts['yes_playlist'] = True
 
-    # --- run download in background thread ---
-    def download_thread():
-        global current_playlist_count, last_download_path
-        try:
-            with ytdlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-                if info and "entries" in info:
-                    current_playlist_count = len(info["entries"])
-                else:
-                    current_playlist_count = 1
-                ydl.download([url])
+    # --- PASS button_index to the new thread ---
+    thread = threading.Thread(target=download_thread, args=(url, build_fn, button_index), daemon=True)
+    thread.start()
 
-            show_success_message(last_download_path)
-            root.after(0, play_alert_sound)
-        except Exception as e:
-            # --- USE OUR NEW ERROR FUNCTION ---
-            show_error_message(e)
-        finally:
-            reset_progress_bar()
+    # --- Start the download in a separate thread ---
+    #threading.Thread(target=download_thread, args=(url, build_fn), daemon=True).start()
+    
+# --- run download in background thread ---
+def download_thread(url: str, build_fn: dict, button_index: int):
+    """
+    FIX: This function now runs in the background, handling the entire
+    yt-dlp process from start to finish.
+    """
+    global last_download_path, current_playlist_count
+    threading.current_thread().button_index = button_index
+    cmd_options = build_fn(url.strip())
+    outtmpl = cmd_options[cmd_options.index("-o") + 1]
+    try:
+        ydl_opts = {
+            #"cookies": COOKIE_FILE,
+            "v": True,
+            "outtmpl": outtmpl,
+            "ignoreerrors": True,
+            "sponsorblock-remove": "sponsor",
+            "progress_hooks": [on_progress],
+            "embed-thumbnail": True,
+            "no-mtime": True,
+            "http_headers": {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36"},
+            "extractor-args": {"youtube": {"player_client": "web"}},
+        }
+        if current_is_video:
+            selected_height = max_resolution.get()
+            format_string = ( 
+                f"bestvideo[ext=mp4][height<={selected_height}]+bestaudio[ext=m4a]/best[ext=mp4]/best"
+            )
+            ydl_opts.update({
+                "format": format_string,
+                "merge_output_format": "mp4",
+            })
+        else:
+            ydl_opts.update({
+                "format": "bestaudio/best",
+                "postprocessors": [{"key":
+                    "FFmpegExtractAudio",
+                    "preferredcodec": "mp3",
+                    "preferredquality": "192",
+                }],
+            })
+        if "_playlist" in build_fn.__name__: ydl_opts['yes_playlist'] = True
+        
+        # Perform the download
+        with ytdlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            if not info:
+                raise ytdlp.utils.DownloadError("Could not retrieve video/playlist information. The URL may be invalid or private.")
+            current_playlist_count = len(info.get("entries", [])) or 1
+            ydl.download([url])
 
-    threading.Thread(target=download_thread, daemon=True).start()
+        # Schedule UI updates on the main thread
+        root.after(0, show_success_message, last_download_path)
+
+    except Exception as e:
+        root.after(0, show_error_message, e)
+    finally:
+        # ALWAYS stop the animation and reset the progress bar
+        #root.after(0, stop_button_animation)
+        gui_queue.put(('stop_animation', button_index))
+        root.after(0, reset_progress_bar)
 
 # -------------
 # Load icons (resized & centered)
@@ -1944,7 +2333,7 @@ def load_icon_original(filename: str) -> Image.Image | None:
             print(f"⚠️ Could not load {filename}: {e}")
     return None
 # Store originals – we’ll use them to generate thumbnails later
-ORIGINAL_ICONS: list[Image.Image | None] = [load_icon_original(p) for p in ICON_PATHS]
+ORIGINAL_ICONS: list[Image.Image | None] = [load_icon_original(p) for p in UI_ICON_PATHS]
 
 # The *current* PhotoImages that the buttons actually display
 CURRENT_PHOTOS: dict[int, ImageTk.PhotoImage] = {}
@@ -1955,22 +2344,17 @@ CURRENT_PHOTOS: dict[int, ImageTk.PhotoImage] = {}
 # -------------
 playback_icon_photos = {}
 try:
-    # --- CORRECTED INDICES ---
-    # Based on your ICON_PATHS list:
-    # 5: Play Orange
-    # 6: Play Default
-    # 7: Pause Orange
-    # 8: Pause Default
-    playback_icon_photos["dark_play"]   = ImageTk.PhotoImage(ORIGINAL_ICONS[5].resize((20, 20), Image.LANCZOS))
-    playback_icon_photos["dark_pause"]  = ImageTk.PhotoImage(ORIGINAL_ICONS[7].resize((20, 20), Image.LANCZOS))
-    playback_icon_photos["light_play"]  = ImageTk.PhotoImage(ORIGINAL_ICONS[6].resize((20, 20), Image.LANCZOS))
-    playback_icon_photos["light_pause"] = ImageTk.PhotoImage(ORIGINAL_ICONS[8].resize((20, 20), Image.LANCZOS))
-    print("✅ Playback icons processed successfully from ORIGINAL_ICONS.")
+    playback_icon_photos["dark_play"]   = ImageTk.PhotoImage(ORIGINAL_ICONS[1].resize((20, 20), Image.LANCZOS))
+    playback_icon_photos["dark_pause"]  = ImageTk.PhotoImage(ORIGINAL_ICONS[3].resize((20, 20), Image.LANCZOS))
+    playback_icon_photos["light_play"]  = ImageTk.PhotoImage(ORIGINAL_ICONS[2].resize((20, 20), Image.LANCZOS))
+    playback_icon_photos["light_pause"] = ImageTk.PhotoImage(ORIGINAL_ICONS[4].resize((20, 20), Image.LANCZOS))
+    print("✅ Playback icons processed successfully from UI_ICON_PATHS.")
 
 except (IndexError, AttributeError) as e:
     # This will fail if the icons couldn't be loaded or the indices are wrong.
-    print(f"⚠️ Could not process playback icons from ORIGINAL_ICONS: {e}. Check ICON_PATHS.")
+    print(f"⚠️ Could not process playback icons from UI_ICON_PATHS: {e}. Check UI_ICON_PATHS.")
     playback_icon_photos = {} # Ensure it's empty on failure, so the UI can fall back to text.
+    
 # -------------
 # Helper - Create a thumbnail that fits a target button width
 # -------------
@@ -1988,6 +2372,17 @@ def thumbnail_for_button(idx: int, btn_width_px: int) -> ImageTk.PhotoImage | No
     CURRENT_PHOTOS[idx] = photo  # keep reference alive
     return photo
 
+def stop_button_animation(button: tk.Button):
+    """Stop gif and restore original button image."""
+    global is_animating, active_button
+    if not is_animating or not active_button:
+        return
+    is_animating = False
+    if hasattr(active_button, 'original_img') and active_button.original_img:
+        active_button.config(image=active_button.original_img)
+    
+    active_button = None
+
 # -------------
 # Resize handler – update all button widths & images (debounced)
 # -------------
@@ -1998,9 +2393,8 @@ _resize_job = None  # global variable to store scheduled job
 def _resize_buttons():
     fw = grid_frame.winfo_width()
     fh = grid_frame.winfo_height()
-    if fw <= 1 or fh <= 1:
-        return
-
+    if fw <= 1 or fh <= 1: return
+    theme = dark_theme if dark_mode.get() else light_theme
     choice = orientation.get()
     for idx, btn in enumerate(grid_frame.winfo_children()):
         if not isinstance(btn, tk.Button):
@@ -2009,18 +2403,33 @@ def _resize_buttons():
         # Calculate button size
         if choice == "Vertical":
             btn_size = max(MIN_BTN_SIZE, fw - 20)
+            btn.configure(width=btn_size, height=btn_size)
         elif choice == "Horizontal":
             btn_size = max(MIN_BTN_SIZE, fh - 20)
+            btn.configure(width=btn_size, height=btn_size)
         else:  # Square 2x2
-            btn_size = max(MIN_BTN_SIZE, min(fw, fh) // 2 - 10)
+            btn_w = max(MIN_BTN_SIZE, fw // 2 - 10)
+            btn_h = max(MIN_BTN_SIZE, fh // 2 - 10)
+            btn.configure(width=btn_w, height=btn_h)
+            btn_size = min(btn_w, btn_h)
 
         btn.configure(width=btn_size, height=btn_size)
 
         # Resize image if present
-        if not minimal_mode.get() and idx < len(ORIGINAL_ICONS) and ORIGINAL_ICONS[idx]:
-            photo = thumbnail_for_button(idx, btn_size)
-            if photo:
-                btn.configure(image=photo)
+        if not minimal_mode.get():
+            icon_size = (btn.winfo_width(), btn.winfo_height())
+            if icon_size[0] > 1: # Check if the button has a valid size
+                # Load the static SVG icon using our new helper function
+                photo = load_png_icon(STATIC_PNG_PATHS[idx], icon_size, theme["button_bg"])
+                if photo:
+                    btn.configure(image=photo)
+                    btn.static_icon = photo
+                    btn.image = photo
+        #if not minimal_mode.get() and idx < len(ORIGINAL_ICONS) and ORIGINAL_ICONS[idx]:
+        #    photo = thumbnail_for_button(idx, btn_size)
+        #    if photo:
+        #        btn.configure(image=photo)
+        #        btn.original_img = photo   # keep original reference updated
 
 def on_root_resize(event=None):
     """Debounce the resize event to avoid choppy redraws."""
@@ -2059,5 +2468,8 @@ if player:
 # -------------
 # INITIAL APPLICATION START
 # -------------
+#load_gifs() 
+is_audio_enabled = initialize_audio()
+check_gui_queue()
 apply_theme()  # Apply the default theme (dark) at startup
 root.mainloop()
