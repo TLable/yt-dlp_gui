@@ -4,8 +4,8 @@ import sys, os
 block_cipher = None
 
 a = Analysis(
-    ['yt-dlp_gui.py'],
-    pathex=['%USERPROFILE%\\Documents\\yt-dlp'],   # <-- your source folder
+    ['yt-dlpGUI.py'],
+    pathex=['C:\\Users\\Logan\\Documents\\yt-dlp'],   # <-- your source folder
     binaries=[],
     datas=[
         ('requirements.txt', '.'), 
@@ -14,10 +14,21 @@ a = Analysis(
         ('Readme.txt', '.'), 
         ('Readme.md', '.'), 
         ('yt download err Icons', 'yt download err Icons'),
-        ('playsound', 'playsound'),
+        ('playmusic', 'playmusic'),
         ('sounds', 'sounds'),
+        ('C:\\Program Files\\GTK3-Runtime Win64\\bin\\libcairo-2.dll', '.'),
+        ('C:\\Program Files\\GTK3-Runtime Win64\\bin\\libfontconfig-1.dll', '.'),
+        ('C:\\Program Files\\GTK3-Runtime Win64\\bin\\libfreetype-6.dll', '.'),
+        ('C:\\Program Files\\GTK3-Runtime Win64\\bin\\libgdk_pixbuf-2.0-0.dll', '.'),
+        ('C:\\Program Files\\GTK3-Runtime Win64\\bin\\libgio-2.0-0.dll', '.'),
+        ('C:\\Program Files\\GTK3-Runtime Win64\\bin\\libglib-2.0-0.dll', '.'),
+        ('C:\\Program Files\\GTK3-Runtime Win64\\bin\\libgobject-2.0-0.dll', '.'),
+        ('C:\\Program Files\\GTK3-Runtime Win64\\bin\\libpango-1.0-0.dll', '.'),
+        ('C:\\Program Files\\GTK3-Runtime Win64\\bin\\libpangocairo-1.0-0.dll', '.'),
+        ('C:\\Program Files\\GTK3-Runtime Win64\\bin\\libpng16-16.dll', '.'),
+        ('C:\\Program Files\\GTK3-Runtime Win64\\bin\\zlib1.dll', '.')
     ],
-    hiddenimports=['pygame', 'PIL', 'PIL.Image', 'PIL.ImageTk'],          # <-- include pygame here
+    hiddenimports=['cairosvg', 'cairocffi', 'tinycss2', 'cssselect2', 'pygame', 'PIL', 'PIL.Image', 'PIL.ImageTk'],          # <-- include pygame here
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -33,7 +44,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=False,          # embed binaries correctly
-    name='yt-dlp_gui',
+    name='yt-dlpGUI',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -48,11 +59,11 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name='yt-dlp_gui',                 # folder output: dist\yt-dlp_gui\
+    name='yt-dlp_gui',
 )
-# At the bottom of yt-dlp_gui.spec
+# At the bottom of yt-dlpGUI.spec
 app = BUNDLE(
     coll,
-    name='yt-dlp_gui',
+    name='yt-dlpGUI',
     icon='yt download err Icons\\YouTube2Media1AV 2A.ico',
 )
