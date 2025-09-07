@@ -4,6 +4,7 @@
 import os, sys, json, shutil, threading, time, re,subprocess
 from pathlib import Path
 from typing import List, Optional
+import random
 import textwrap
 import tkinter as tk
 from tkinter import CENTER, Toplevel, Label, Button
@@ -78,7 +79,7 @@ UI_ICON_PATHS = [
 
 # Global playlist trackingFQI
 APP_NAME    = "YouTube‑Downloader"
-APP_VERSION = "v0.15.3"        # ← change this when you release a new build
+APP_VERSION = "v0.15.4"        # ← change this when you release a new build
 active_button: Optional[tk.Button] = None # Will hold the button being animated
 is_animating = False
 gif_frames: dict[int, list[ImageTk.PhotoImage]] = {}
@@ -91,9 +92,11 @@ last_download_path: Optional[str] = None
 current_is_video = False
 current_base_dir = ""
 is_audio_enabled = False
-button_images_refs: list[ImageTk.PhotoImage] = []
+button_images_refs: list[ImageTk.PhotoImage] = [] 
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), "config.json")
+loaded_loop_track_path: Optional[str] = None
 ICON_FOLDER = "yt download err Icons"
+loaded_player_volume: float = 0.5 # Default to 50%
 _resize_save_job = None # For saving window geometry
 
 # -------------
@@ -115,6 +118,9 @@ def _resource_path(relative_path: str) -> str:
     return str(full_path)
 
 music_file = _resource_path("playmusic/No Copyright Come With Me (Creative Commons) deep house.mp3")
+print(f"--- [DEBUG] Attempting to use music file at this exact path: ---")
+print(f"'{music_file}'")
+print(f"-----------------------------------------------------------------")
 
 ALERT_SOUND_FILE: str | None = _resource_path("sounds/Coin Win.mp3")
 music_muted = False
@@ -124,7 +130,7 @@ ico_filename = UI_ICON_PATHS[-1]
 icon_path = _resource_path(os.path.join(ICON_FOLDER, ico_filename))
 
 def load_config():
-    global MUSIC_DIR, VIDEO_DIR, ALERT_SOUND_FILE, max_resolution
+    global MUSIC_DIR, VIDEO_DIR, ALERT_SOUND_FILE, max_resolution, loaded_loop_track_path, loaded_player_volume
     if not os.path.exists(CONFIG_FILE):
         return
     try:
@@ -139,15 +145,39 @@ def load_config():
             else:
                 # fallback to default bundled sound
                 ALERT_SOUND_FILE = _resource_path("sounds/Coin Win.mp3")
-
+                
+            # --- Load the saved volume level
+            saved_volume = data.get("player_volume", loaded_player_volume)
+            # Clamp the value between 0.0 and 1.0 to prevent errors
+            loaded_player_volume = max(0.0, min(1.0, float(saved_volume)))
+            print(f"[DEBUG] Loaded player volume from config: {loaded_player_volume}")
+            
+            # --- NEW: Load the new music player settings ---
+            is_random_playback.set(data.get("is_random_playback", True)) # Default to True
+            
+            # Load the random music directory path
+            saved_random_dir = data.get("random_music_directory")
+            if saved_random_dir:
+                random_music_directory.set(saved_random_dir)
+            
+            # Load the specific looping track path into our temporary global variable
+            saved_loop_track = data.get("looping_track_path")
+            if saved_loop_track and os.path.exists(saved_loop_track):
+                loaded_loop_track_path = saved_loop_track
+                print(f"[DEBUG] Loaded looping track from config: {loaded_loop_track_path}")
+            saved_volume = data.get("player_volume", 0.5)
+            loaded_player_volume = max(0.0, min(1.0, float(saved_volume)))
+            print(f"[DEBUG] Loaded player volume from config: {loaded_player_volume}")
             dark_mode.set(data.get("dark_mode", False))
             minimal_mode.set(data.get("minimal_mode", False))
             orientation.set(data.get("orientation", "Vertical"))
             root.geometry(data.get("window_geometry", "265x605"))
             max_resolution.set(data.get("max_resolution", "1440"))
             # The window geometry is loaded by a separate function
-    except (FileNotFoundError, json.JSONDecodeError):
-        pass # It's okay if the file doesn't exist on first run
+    except (FileNotFoundError, json.JSONDecodeError, ValueError, KeyError) as e:
+        # If the config is missing, corrupt, or has a bad value, fall back to defaults
+        print(f"[DEBUG] Could not fully load config ({e}), using defaults for some settings.")
+        loaded_player_volume
 
 def save_config():
     """Saves application settings."""
@@ -165,9 +195,14 @@ def save_config():
         "minimal_mode": minimal_mode.get(),
         "orientation": orientation.get(),
         "window_geometry": root.geometry(),
-        "max_resolution": max_resolution.get()
+        "max_resolution": max_resolution.get(),
+        "is_random_playback": is_random_playback.get(),
+        "random_music_directory": random_music_directory.get(),
     })
-
+    # Safely get the looping track path from the player object if it exists
+    if player and player.default_loop_track:
+        data["looping_track_path"] = str(player.default_loop_track)
+        
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
 
@@ -246,6 +281,20 @@ def toggle_minimal():
     rebuild_buttons()   # Recreate toolbar/buttons with minimal layout
     save_window_geometry()
 
+# --- NEW: Scans the playmusic directory for valid song files ---
+def get_music_files(directory_path: str) -> list[Path]:
+    """
+    Scans a directory for .mp3 and .wav files and returns a list of their paths.
+    """
+    music_dir = Path(directory_path)
+    if not music_dir.is_dir():
+        print(f"[DEBUG] Music directory not found: {music_dir}")
+        return []
+    
+    # Find all files with .mp3 or .wav extensions
+    song_list = list(music_dir.glob("*.mp3")) + list(music_dir.glob("*.wav"))
+    print(f"[DEBUG] Found {len(song_list)} songs in {music_dir}.")
+    return song_list
 
 # -------------
 # 🔹 Load geometry + layout
@@ -297,7 +346,7 @@ def initialize_audio():
     Returns True on success, False on failure.
     """
     try:
-        print("[DEBUG] Initializing Pygame...")
+        print("[DEBUG] Initializing Pygame & Mixer...")
         pygame.init()
         print("[DEBUG] Initializing Pygame Mixer...")
         pygame.mixer.init()
@@ -306,88 +355,29 @@ def initialize_audio():
     except Exception as e:
         print(f"!!!!!!!!!!!!!! PYGAME AUDIO FAILED TO INITIALIZE !!!!!!!!!!!!!!")
         print(f"ERROR: {e}")
-        print(f"Audio will be disabled.")
         return False
 
-# --- Global flag to track audio status ---
-is_audio_enabled = False
+# --- NEW: Allows the user to select a specific track to loop ---
+def set_track_to_loop():
+    """Opens a file dialog for the user to select an MP3 or WAV file to loop."""
+    if not player: return
 
-# -------------
-# Music player – uses pygame.mixer for MP3 looping & mute support
-# -------------
-class LoopingMusicPlayer:
-    def __init__(self, mp3_file: Path):
-        self.mp3_file = mp3_file
-        self.is_muted = False
-        self.is_paused = False
-        self.pause_pos = 0  # store position in seconds
-        self.volume = 0.5   # default starting volume
-        self.is_loaded = False
-        
-            
-        if not pygame.mixer.get_init():
-            try:
-                pygame.mixer.init()
-            except Exception as e:
-                print(f"⚠️ Could not init mixer: {e}")
-                return
+    file_path_str = filedialog.askopenfilename(
+        title="Select a Song to Loop",
+        filetypes=[("Audio Files", "*.mp3 *.wav")]
+    )
+    if file_path_str:
+        player.set_looping_track(Path(file_path_str))
 
-        # --- MODIFIED: Check if audio is enabled before proceeding ---
-        if not is_audio_enabled:
-            print("[DEBUG] Audio is disabled, LoopingMusicPlayer will not initialize.")
-            return
+# --- NEW: Allows the user to select a folder for random playback ---
+def set_random_music_folder():
+    """Opens a directory dialog for the user to select a folder for random playback."""
+    if not player: return
 
-        try:
-            print(f"[DEBUG] Attempting to load music file: {mp3_file}")
-            pygame.mixer.music.load(str(mp3_file))
-            self.is_loaded = True # --- NEW: Set flag to True on success ---
-            print("[DEBUG] Music file loaded successfully.")
-        except Exception as e:
-            # --- IMPROVED: This will now print the REAL error (e.g., file not found) ---
-            print(f"⚠️ Could not load music file. ERROR: {e}")
-            self.is_loaded = False
-
-    def start(self) -> None:
-        if self.is_muted or not self.is_loaded:
-            if not self.is_loaded:
-                print("[DEBUG] Playback aborted: music file was not loaded.")
-            return
-        try:
-            pygame.mixer.music.play(-1)
-            self.is_paused = False
-        except Exception as e:
-            print(f"⚠️ Could not play music: {e}")
-
-    def stop(self) -> None:
-        pygame.mixer.music.stop()
-        self.is_paused = False
-        #self.pause_pos = 0
-
-    def toggle_pause(self) -> None:
-            """Pauses or resumes the music playback correctly."""
-            if self.is_paused:
-                # If paused, unpause the music
-                pygame.mixer.music.unpause()
-                print("[DEBUG] Resuming playback.")
-            else:
-                # If playing, pause the music
-                pygame.mixer.music.pause()
-                print("[DEBUG] Pausing playback.")
-
-            # Invert the paused state
-            self.is_paused = not self.is_paused
-
-    def set_volume(self, vol: float) -> None:
-        """`vol` is 0.0 … 1.0."""
-        self.volume = vol  # <-- store the volume for later use
-        pygame.mixer.music.set_volume(vol)
-
-    def toggle_mute(self) -> None:
-        if self.is_muted:
-            self.start()          # resume playing
-        else:
-            self.stop()           # stop playback
-        self.is_muted = not self.is_muted
+    dir_path_str = filedialog.askdirectory(title="Select Folder for Random Music")
+    if dir_path_str:
+        random_music_directory.set(dir_path_str) # Store the new path
+        player.update_random_playlist(Path(dir_path_str))
 
 def _load_pause_icon(icon_name: str = "media playback pause orange.png",
                      size=(20, 20)) -> ImageTk.PhotoImage:
@@ -510,17 +500,24 @@ def animate_button(widget, frames, frame_index=0):
     widget.after_id = widget.after(50, animate_button, widget, frames, next_index)
 
 def start_animation_on_button(button_index):
+    global active_button
+    if button_index >= len(grid_frame.winfo_children()): return
     """Begins the animation for a specific button by its index."""
     print(f"[DEBUG] Called start_animation_on_button for index: {button_index}")
-    theme = dark_theme if dark_mode.get() else light_theme
+    
     button = grid_frame.winfo_children()[button_index]
-    if getattr(button, 'is_animating', False): return # Already animating
-    if hasattr(button, 'is_animating') and button.is_animating:
-        print("[DEBUG] Button is already animating. Aborting.")
-        return
-
+    active_button = button # Set the new active butto
+    
+    theme = dark_theme if dark_mode.get() else light_theme
+    
     button.is_animating = True
     icon_size = (button.winfo_width(), button.winfo_height())
+    
+    #if getattr(button, 'is_animating', False): return # Already animating
+    #if hasattr(button, 'is_animating') and button.is_animating:
+    #    print("[DEBUG] Button is already animating. Aborting.")
+    #    return
+
     frames = load_gif_frames(ANIMATED_GIF_PATHS[button_index], icon_size, theme["button_bg"])
     print(f"[DEBUG] Button size for animation is: {icon_size}")
     if frames:
@@ -717,9 +714,178 @@ def stop_button_animation():
     
     active_button = None
 
-if pygame and os.path.exists(music_file):
-    player = LoopingMusicPlayer(music_file)
-    threading.Thread(target=lambda: (time.sleep(5), player.start()), daemon=True).start()
+# --- Global flag to track audio status ---
+is_audio_enabled = False
+
+# -------------
+# Music player – uses pygame.mixer for MP3 looping & mute support
+# -------------
+class LoopingMusicPlayer:
+    def __init__(self, default_loop_track_path: Path, initial_random_folder_path: Path):
+        """
+        Initializes the player's state but does NOT load any music yet.
+        Playback is handled by the start() method.
+        """
+        self.default_loop_track = default_loop_track_path
+        random_music_directory.set(str(initial_random_folder_path))
+        self.random_playlist = get_music_files(str(initial_random_folder_path))
+        
+        # --- Set initial states ---
+        self.is_muted = False
+        self.is_paused = False
+        self.pause_pos = 0  # store position in seconds
+        self.volume = 0.5   # default starting volume
+        self.is_loaded = False
+        self.volume = loaded_player_volume
+        self._watcher_id = None # To manage the root.after() job
+        
+        # --- MODIFIED: Check if audio is enabled before proceeding ---
+        if not is_audio_enabled:
+            print("[DEBUG] Audio is disabled, LoopingMusicPlayer will not initialize.")
+            return
+            
+        if not pygame.mixer.get_init():
+            try:
+                pygame.mixer.init()
+            except Exception as e:
+                print(f"⚠️ Could not init mixer: {e}")
+                return 
+
+    def start(self) -> None:
+        """Kicks off the playback logic based on the current mode."""
+        if not is_audio_enabled:
+            print("[DEBUG] Audio is disabled, player will not start.")
+            return
+        self.play_next_song()
+        
+    def play_next_song(self):
+        """Loads and plays the next song based on the current playback mode."""
+        if self.is_muted: return
+        self.stop() # Stop any current music before loading the next
+
+        song_to_play = None
+        play_loops = 0
+
+        if is_random_playback.get():
+            # --- RANDOM MODE ---
+            if not self.random_playlist:
+                messagebox.showwarning("Random Playback", "The selected random music folder is empty or contains no valid audio files.")
+                return
+            song_to_play = random.choice(self.random_playlist)
+            play_loops = 0 # Play once, the watcher will handle playing the next song
+            print(f"[DEBUG] Playing random song: {song_to_play.name}")
+        else:
+            # --- LOOPING MODE ---
+            song_to_play = self.default_loop_track
+            play_loops = -1 # Loop this song forever
+            print(f"[DEBUG] Playing looping track: {song_to_play.name}")
+
+        if song_to_play and song_to_play.exists():
+            try:
+                pygame.mixer.music.load(str(song_to_play))
+                self.is_loaded = True
+                pygame.mixer.music.set_volume(self.volume)
+                pygame.mixer.music.play(loops=play_loops)
+                self.is_paused = False
+                # IMPORTANT: Only start the "end of song" checker if in random mode
+                if is_random_playback.get():
+                    self._check_song_end()
+            except Exception as e:
+                print(f"⚠️ Could not load/play song '{song_to_play.name}'. ERROR: {e}")
+                self.is_loaded = False
+        else:
+            self.is_loaded = False
+            print(f"⚠️ Song not found: {song_to_play}")
+
+    def _check_song_end(self):
+        """
+        Watcher function that checks if the current song has finished playing.
+        If it has, it calls play_next_song() to start a new random track.
+        """
+        # If we are no longer in random mode, stop checking.
+        if not is_random_playback.get() or self.is_paused or self.is_muted:
+            if self._watcher_id: root.after_cancel(self._watcher_id)
+            return
+
+        # If the music is no longer playing, start the next song.
+        if not pygame.mixer.music.get_busy():
+            print("[DEBUG] Song finished. Playing next random song.")
+            self.play_next_song()
+        else:
+            # Otherwise, schedule this check again in a couple of seconds.
+            self._watcher_id = root.after(2000, self._check_song_end)
+            
+    def on_playback_mode_change(self, *args):
+        """Called by the menu checkbox. Stops current music and starts the new mode."""
+        print(f"[DEBUG] Playback mode changed. Random is now: {is_random_playback.get()}")
+        self.stop()
+        root.after(100, self.start)
+            
+    # --- NEW: Method to handle setting a new looping track ---
+    def set_looping_track(self, new_track_path: Path):
+        """
+        Updates the default song, turns off random mode, and restarts playback.
+        """
+        print(f"[DEBUG] New looping track has been set to: {new_track_path.name}")
+        
+        # 1. Update the default song to the user's new choice
+        self.default_loop_track = new_track_path
+        
+        # 2. CRUCIAL: Automatically turn off random mode.
+        # This provides a great user experience.
+        is_random_playback.set(False)
+        
+        # 3. Use our existing mode-change logic to restart the player cleanly.
+        self.on_playback_mode_change()
+
+    def update_random_playlist(self, new_folder_path: Path):
+        """Scans a new folder for songs, turns on random mode, and restarts playback."""
+        print(f"[DEBUG] Updating random playlist from folder: {new_folder_path}")
+        self.random_playlist = get_music_files(str(new_folder_path))
+        is_random_playback.set(True) # Automatically switch to random mode
+
+    def stop(self) -> None:
+        if not self.is_loaded: return
+        pygame.mixer.music.stop()
+        self.is_paused = False
+        # Cancel any pending song-end check
+        if self._watcher_id:
+            root.after_cancel(self._watcher_id)
+            self._watcher_id = None
+
+    def on_playback_mode_change(self):
+        """Called by the menu. Stops current music and starts the new mode."""
+        print(f"[DEBUG] Playback mode changed. Random is now: {is_random_playback.get()}")
+        self.stop()
+        # Give a brief moment before starting the new song
+        root.after(100, self.start)
+        
+    def toggle_pause(self) -> None:
+        if not self.is_loaded: return
+        """Pauses or resumes the music playback correctly."""
+        if self.is_paused:
+            # If paused, unpause the music
+            pygame.mixer.music.unpause()
+            print("[DEBUG] Resuming playback.")
+        else:
+            # If playing, pause the music
+            pygame.mixer.music.pause()
+            print("[DEBUG] Pausing playback.")
+
+        # Invert the paused state
+        self.is_paused = not self.is_paused
+
+    def set_volume(self, vol: float) -> None:
+        """`vol` is 0.0 … 1.0."""
+        self.volume = vol  # <-- store the volume for later use
+        pygame.mixer.music.set_volume(vol)
+
+    def toggle_mute(self) -> None:
+        if self.is_muted:
+            self.start()          # resume playing
+        else:
+            self.stop()           # stop playback
+        self.is_muted = not self.is_muted
 
 def create_light_toolbar():
     """Create and display a custom, light-themed toolbar with clickable menus."""
@@ -912,6 +1078,20 @@ def _ensure_dir(path: str) -> None:
 
     # Default folders (can be changed via menu)
 
+# --- NEW: A dedicated function to handle the application closing event ---
+def on_closing():
+    """
+    This function is called when the user tries to close the main window.
+    It guarantees that the final configuration is saved before exiting.
+    """
+    print("[DEBUG] Window is closing. Saving final configuration...")
+    
+    # Save all current settings (including the last-set volume) one last time.
+    save_config()
+    
+    # Properly destroy the Tkinter window and exit the application.
+    root.destroy()
+    
 def _base_cmd(url: str, *, playlist_title: bool = False,
               video: bool = False) -> list[str]:
     """
@@ -945,6 +1125,7 @@ def _base_cmd(url: str, *, playlist_title: bool = False,
         selected_height = max_resolution.get()  # dynamic resolution
         cmd += [
             "-f", f"bestvideo[ext=mp4][height<={selected_height}]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+            "--embed-chapters",
             "--merge-output-format", "mp4",
         ]
     else:
@@ -1242,6 +1423,10 @@ show_messages_var = tk.BooleanVar(value=True)
 # Bind the resize/move event handler
 root.bind("<Configure>", schedule_geometry_save, add="+")  # track size/move
 
+# Create variable to set if LoopingMusicPlayer is to play track 'next Random'
+is_random_playback = tk.BooleanVar(value=True) # Default to random mode
+random_music_directory = tk.StringVar(value="")
+
 # -------------
 # 🔹 Global geometry state
 # -------------
@@ -1304,6 +1489,9 @@ container.rowconfigure(0, weight=0)   # fixed-height for overlay
 container.rowconfigure(1, weight=1)   # buttons expand
 container.rowconfigure(2, weight=0)   # bottom progress bar fixed
 container.columnconfigure(0, weight=1)
+
+# --- NEW: Intercept the window close ("X") button event ---
+root.protocol("WM_DELETE_WINDOW", on_closing)
 
 # -------------
 # --- Helpers ---
@@ -1528,7 +1716,7 @@ def create_volume_overlay(root, player: LoopingMusicPlayer):
         from_=0.0,
         to=1.0,
         orient="horizontal",
-        value=0.5,
+        value=player.volume,
         command=lambda v: player.set_volume(float(v)),
         style=slider_style_name
     )
@@ -1544,7 +1732,15 @@ def create_volume_overlay(root, player: LoopingMusicPlayer):
 def apply_theme() -> None:
     """Applies the selected color theme to all UI elements."""
     global custom_toolbar, volume_overlay, volume_slider
-
+    active_animation_index = None
+    if is_animating and active_button and active_button.winfo_exists():
+        try:
+            # Find the numerical index of the currently animating button.
+            active_animation_index = grid_frame.winfo_children().index(active_button)
+            print(f"[DEBUG] Preserving animation state for button index: {active_animation_index}")
+        except ValueError:
+            # This is a safety net in case the button isn't found.
+            active_animation_index = None
     theme = dark_theme if dark_mode.get() else light_theme 
     # --- Toolbar and Menubar Management ---
     if 'custom_toolbar' in globals() and custom_toolbar and custom_toolbar.winfo_exists():
@@ -1584,6 +1780,13 @@ def apply_theme() -> None:
 
     # Rebuild the main buttons to apply new colors
     rebuild_buttons()
+    
+    # After the new buttons have been created, check if we need to restore an animation.
+    if active_animation_index is not None:
+        print(f"[DEBUG] Restoring animation for new button at index: {active_animation_index}")
+        # Call the existing start_animation function on the NEW button at the same index.
+        # We add a small delay to ensure the new button is fully drawn and sized.
+        root.after(50, lambda: start_animation_on_button(active_animation_index))
 
 # -------------
 # CENTRALIZED TTK WIDGET STYLING
@@ -1644,6 +1847,7 @@ def download(url: str, out_template: str):
         "ignoreerrors": True,
         "extractor-args": "youtube:player_client=android",
         "embed-thumbnail": True,
+        "embed-chapters": True,
     }
 
     with ytdlp.YoutubeDL(ydl_opts) as ydl:
@@ -1698,7 +1902,7 @@ def rebuild_buttons() -> None:
     vertical_padding = 1
 
     for idx, (label, builder) in enumerate(button_specs):
-        # Base button kwargs from the theme dictionary
+        # 1. Base button kwargs from the theme dictionary
         btn_kwargs = {
             "command": lambda b=builder, i=idx: on_button_click(b, i),
             "bg": theme["button_bg"],
@@ -1709,22 +1913,21 @@ def rebuild_buttons() -> None:
             "bd": 1
         }
 
-        # Minimal mode shows text only
+        # 2. Prepare the kwargs dictionary based on the current mode
         if minimal_mode.get():
-            btn.config(text=label)
+            # In minimal mode, we only need to add the 'text' key
+            btn_kwargs["text"] = label
         else:
+            # In icon mode, create a placeholder image and add 'image' and 'compound' keys
             photo = ImageTk.PhotoImage(Image.new('RGBA', (MIN_BTN_SIZE, MIN_BTN_SIZE)))
-            if photo:
-                btn_kwargs["image"] = photo
-                btn_kwargs["compound"] = "center"
-            else:
-                btn_kwargs["text"] = label # Fallback
+            btn_kwargs["image"] = photo
+            btn_kwargs["compound"] = "center"
 
-        # Create button
+        # 3. NOW, create the button using the fully prepared dictionary
         btn = tk.Button(grid_frame, **btn_kwargs)
         btn.grid_propagate(False)
 
-        # Store the original PNG (so we can restore later after showing a gif)
+        # 4. Store the original image reference if it exists
         if "image" in btn_kwargs:
             btn.original_img = btn_kwargs["image"]
         else:
@@ -1813,11 +2016,19 @@ file_menu = tk.Menu(menubar, tearoff=0)
 file_menu.add_command(label="Locate Music Path…", command=set_music_path)
 file_menu.add_command(label="Locate Video Path…", command=set_video_path)
 file_menu.add_separator()
+is_random_playback.trace_add("write", lambda *args: player.on_playback_mode_change() if player else None)
+file_menu.add_checkbutton(
+    label="Play Random Song",
+    variable=is_random_playback,
+)
+file_menu.add_command(label="Set Track to Loop...", command=set_track_to_loop)
+file_menu.add_command(label="Set Random Music Folder...", command=set_random_music_folder)
+file_menu.add_separator()
 file_menu.add_command(label="Set Alert Sound…", command=set_alert_sound)
 file_menu.add_command(label="Clear Alert Sound", command=clear_alert_sound)
 file_menu.add_separator()
 
-file_menu.add_command(label="Exit", command=root.quit)
+file_menu.add_command(label="Exit", command=on_closing)
 menubar.add_cascade(label="File", menu=file_menu)
 
 edit_menu = tk.Menu(menubar, tearoff=0)
@@ -2037,12 +2248,18 @@ def download_thread(url: str, build_fn: dict, button_index: int):
         }
         if current_is_video:
             selected_height = max_resolution.get()
-            format_string = ( 
+            format_string = (
                 f"bestvideo[ext=mp4][height<={selected_height}]+bestaudio[ext=m4a]/best[ext=mp4]/best"
             )
             ydl_opts.update({
                 "format": format_string,
                 "merge_output_format": "mp4",
+                "postprocessors": [{
+                    'add_infojson': None,
+                    'key': 'FFmpegMetadata',
+                    'add_chapters': True,
+                    'add_metadata': True, # Also embeds title, artist, etc.
+                }],
             })
         else:
             ydl_opts.update({
@@ -2198,10 +2415,34 @@ def toggle_minimal():
 # -------------
 # Background music – optional
 # -------------
+# --- 1. Initialize the audio system FIRST ---
+is_audio_enabled = initialize_audio()
+# --- 2. NOW create the music player, which depends on the audio system ---
 player: Optional[LoopingMusicPlayer] = None
-if pygame and os.path.exists(music_file):
-    player = LoopingMusicPlayer(music_file)
-    threading.Thread(target=lambda: (time.sleep(5), player.start()), daemon=True).start()
+if pygame:
+    if is_audio_enabled:
+        # 1. Use the loaded looping track if it exists, otherwise use the hardcoded default.
+        if loaded_loop_track_path:
+            default_track = Path(loaded_loop_track_path)
+        else:
+            default_track = Path(_resource_path("playmusic/No Copyright Come With Me (Creative Commons) deep house.mp3"))
+        # 2. Use the loaded random folder if it exists, otherwise use the hardcoded default.
+        if random_music_directory.get():
+            default_random_folder = Path(random_music_directory.get())
+        else:
+            default_random_folder = Path(_resource_path("playmusic"))
+            
+        #default_track = Path(_resource_path("playmusic/No Copyright Come With Me (Creative Commons) deep house.mp3"))
+        #default_random_folder = Path(_resource_path("playmusic"))
+        
+        player = LoopingMusicPlayer(
+            default_loop_track_path=default_track,
+            initial_random_folder_path=default_random_folder
+        )
+        # The startup thread kicks off the new player logic
+        threading.Thread(target=lambda: (time.sleep(5), player.start()), daemon=True).start()
+    else:
+        print("[DEBUG] Cannot start music player because audio system failed to initialize.")
 
 def toggle_pause(self) -> None:
     if self.is_paused:
@@ -2218,7 +2459,6 @@ if player:
 # INITIAL APPLICATION START
 # -------------
 #load_gifs() 
-is_audio_enabled = initialize_audio()
 check_gui_queue()
 apply_theme()  # Apply the default theme (dark) at startup
 root.mainloop()
