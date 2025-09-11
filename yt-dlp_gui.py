@@ -491,6 +491,8 @@ def load_gif_frames(path, button_size, theme_color):
 
 def animate_button(widget, frames, frame_index=0):
     """Recursively updates the widget's image to play the GIF animation."""
+    if minimal_mode.get():
+        return
     if not getattr(widget, 'is_animating', False):
         return  # Stop the loop if the animation flag has been turned off
 
@@ -501,6 +503,8 @@ def animate_button(widget, frames, frame_index=0):
 
 def start_animation_on_button(button_index):
     global active_button
+    if minimal_mode.get():
+        return
     if button_index >= len(grid_frame.winfo_children()): return
     """Begins the animation for a specific button by its index."""
     print(f"[DEBUG] Called start_animation_on_button for index: {button_index}")
@@ -655,6 +659,8 @@ def start_button_animation(button: tk.Button, button_index: int):
     FIX: Replaces button PNG with a resized, animated GIF.
     """
     global active_button, is_animating
+    if minimal_mode.get():
+        return
     if is_animating or button_index not in gif_frames:
         return
 
@@ -2462,3 +2468,4 @@ if player:
 check_gui_queue()
 apply_theme()  # Apply the default theme (dark) at startup
 root.mainloop()
+
