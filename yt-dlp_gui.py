@@ -588,10 +588,50 @@ def custom_askstring(title: str, prompt: str, parent: tk.Tk) -> Optional[str]:
     tk.Label(main_frame, text=prompt, justify=tk.CENTER, font=("Arial", 11),
                 bg=theme["bg"], fg=theme["fg"]).pack(padx=10, pady=20)
 
-    entry = ttk.Entry(main_frame, width=40)
-    entry.pack(pady=(0, 10))
-    entry.focus_set() # Automatically focus the text box
+    entry_frame = tk.Frame(main_frame, bg=theme["bg"])
+    entry_frame.pack(pady=(0, 10), padx=20, fill="x")
 
+    entry = ttk.Entry(entry_frame, width=40)
+    # The entry widget expands to fill the space left by the button
+    entry.pack(side="left", fill="x", expand=True)
+    entry.focus_set()
+
+    paste_icon_filename = _resource_path(os.path.join(ICON_FOLDER, "yz_Paste_Icon_Gray_Lght_Thme.png"))
+    
+    # --- NEW: Create and place the Paste Button ---
+    try:
+        # Assumes you have a 'paste_icon.png' in your ICON_FOLDER
+        #yz_Paste_Icon_Gray_Lght_Thme.png
+        #yz_Paste_Icon_Gray_Dark_Thme.png
+        if dark_mode.get():
+            paste_icon_path = _resource_path(os.path.join(ICON_FOLDER, "yz_Paste_Icon_Gray_Dark_Thme.png"))
+        else:
+            paste_icon_path = _resource_path(os.path.join(ICON_FOLDER, "yz_Paste_Icon_Gray_Lght_Thme.png"))
+            
+        paste_img = Image.open(paste_icon_path).resize((18, 18), Image.LANCZOS)
+        paste_photo = ImageTk.PhotoImage(paste_img)
+        
+        def paste_from_clipboard():
+            try:
+                # Get content from the clipboard
+                clipboard_content = root.clipboard_get()
+                # Clear the entry widget and insert the content
+                entry.delete(0, tk.END)
+                entry.insert(0, clipboard_content)
+            except tk.TclError:
+                # This happens if the clipboard is empty or contains non-text data
+                pass 
+
+        paste_button = tk.Button(entry_frame, image=paste_photo, width=24, height=24, 
+                                 command=paste_from_clipboard,
+                                 bg=theme["button_bg"], activebackground=theme["button_active_bg"],
+                                 relief="raised", bd=1, highlightthickness=0)
+        paste_button.image = paste_photo # Keep a reference to prevent garbage collection
+        # Pack the button to the right, with a little padding
+        paste_button.pack(side="right", padx=(5, 0))
+    except Exception as e:
+        print(f"⚠️ Could not load paste icon: {e}")
+        # If the icon fails, the entry box will just be wider, which is a graceful fallback.
     button_frame = tk.Frame(main_frame, bg=theme["bg"])
     button_frame.pack()
 
@@ -628,8 +668,8 @@ def custom_askstring(title: str, prompt: str, parent: tk.Tk) -> Optional[str]:
     parent_height = parent.winfo_height()
     win_width = win.winfo_width()
     win_height = win.winfo_height()
-    x = parent_x + (parent_width // 2) - (win_width // 2)
-    y = parent_y + (parent_height // 2) - (win_height // 2)
+    x = parent.winfo_x() + (parent.winfo_width() // 2) - (win.winfo_width() // 2)
+    y = parent.winfo_y() + (parent.winfo_height() // 2) - (win.winfo_height() // 2)
 
     # 5. Set the dialog's position.
     win.geometry(f"+{x}+{y}")
@@ -2468,4 +2508,5 @@ if player:
 check_gui_queue()
 apply_theme()  # Apply the default theme (dark) at startup
 root.mainloop()
+
 
