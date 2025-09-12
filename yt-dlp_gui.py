@@ -1168,17 +1168,16 @@ def _base_cmd(url: str, *, playlist_title: bool = False,
     cmd: list[str] = [YTDLP_PATH, url, "-o", out_template]
 
     if video:
-        selected_height = max_resolution.get()  # dynamic resolution
+        selected_res = max_resolution.get()  # dynamic resolution
         cmd += [
-            "-f", f"bestvideo[ext=mp4][height<={selected_height}]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+            "-t", "mp4",
+            "-S", f"res:{selected_res}",
             "--embed-chapters",
-            "--merge-output-format", "mp4",
         ]
     else:
         cmd += [
-            "-f", "bestaudio/best",
-            "--extract-audio",
-            "--audio-format", "mp3",
+            # "-f", "bestaudio/best",  # by default
+            "-t", "mp3",
             "--audio-quality", "0",
         ]
 
@@ -1883,17 +1882,31 @@ def reset_progress_bar() -> None:
 # -------------
 def download(url: str, out_template: str):
     ydl_opts = {
-        #"-S": "ytsearch:bv*[height=720]+ba",
-        "v": True,
+        #"format_sort": ["res:720"],
+        "verbose": True,
         "progress_hooks": [on_progress],
-        "outtmpl": out_template,   # now defined
-        #"cookies": COOKIE_FILE,
-        "sponsorblock-remove": "sponsor",
-        "no-mtime": True,
+        "outtmpl": {'default': out_template, 'pl_thumbnail': ''},   # now defined
+        #"cookiefile": COOKIE_FILE,
+        'postprocessors': [{'api': 'https://sponsor.ajay.app',
+                            'categories': {'sponsor'},
+                            'key': 'SponsorBlock',
+                            'when': 'after_filter'},
+                           {'force_keyframes': False,
+                            'key': 'ModifyChapters',
+                            'remove_chapters_patterns': [],
+                            'remove_ranges': [],
+                            'remove_sponsor_segments': {'sponsor'},
+                            'sponsorblock_chapter_title': '[SponsorBlock]: '
+                                                          '%(category_names)l'},
+                           {'add_chapters': True,
+                            'add_infojson': None,
+                            'add_metadata': False,
+                            'key': 'FFmpegMetadata'},
+                           {'already_have_thumbnail': False, 'key': 'EmbedThumbnail'}],
+        "updatetime": False,
         "ignoreerrors": True,
-        "extractor-args": "youtube:player_client=android",
-        "embed-thumbnail": True,
-        "embed-chapters": True,
+        "extractor_args": {'youtube': {'player_client': ['android']}},
+        "writethumbnail": True,
     }
 
     with ytdlp.YoutubeDL(ydl_opts) as ydl:
@@ -2281,27 +2294,50 @@ def download_thread(url: str, build_fn: dict, button_index: int):
     outtmpl = cmd_options[cmd_options.index("-o") + 1]
     try:
         ydl_opts = {
-            #"cookies": COOKIE_FILE,
-            "v": True,
-            "outtmpl": outtmpl,
+            #"cookiefile": COOKIE_FILE,
+            "verbose": True,
+            "outtmpl": {'default': outtmpl, 'pl_thumbnail': ''},
             "ignoreerrors": True,
-            "sponsorblock-remove": "sponsor",
+            'postprocessors': [{'api': 'https://sponsor.ajay.app',
+                                'categories': {'sponsor'},
+                                'key': 'SponsorBlock',
+                                'when': 'after_filter'},
+                               {'force_keyframes': False,
+                                'key': 'ModifyChapters',
+                                'remove_chapters_patterns': [],
+                                'remove_ranges': [],
+                                'remove_sponsor_segments': {'sponsor'},
+                                'sponsorblock_chapter_title': '[SponsorBlock]: '
+                                                              '%(category_names)l'},
+                               {'add_chapters': True,
+                                'add_infojson': None,
+                                'add_metadata': False,
+                                'key': 'FFmpegMetadata'},
+                               {'already_have_thumbnail': False, 'key': 'EmbedThumbnail'}],
             "progress_hooks": [on_progress],
-            "embed-thumbnail": True,
-            "no-mtime": True,
+            "writethumbnail": True,
+            "updatetime": False,
             "http_headers": {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36"},
-            "extractor-args": {"youtube": {"player_client": "web"}},
+            "extractor_args": {"youtube": {"player_client": ["web"]}},
         }
         if current_is_video:
-            selected_height = max_resolution.get()
-            format_string = (
-                f"bestvideo[ext=mp4][height<={selected_height}]+bestaudio[ext=m4a]/best[ext=mp4]/best"
-            )
+            selected_res = max_resolution.get()
+            format_sort_list = [
+                f"res:{selected_res}",
+                'vcodec:h264',
+                'lang',
+                'quality',
+                'res',
+                'fps',
+                'hdr:12',
+                'acodec:aac',
+            ]
             ydl_opts.update({
-                "format": format_string,
+                'final_ext': 'mp4',
+                "format_sort": format_sort_list,
                 "merge_output_format": "mp4",
-                "postprocessors": [{
-                    'add_infojson': None,
+                "postprocessors": [{'key': 'FFmpegVideoRemuxer', 'preferedformat': 'mp4'}, {
+                    'add_infojson': 'if_exists',
                     'key': 'FFmpegMetadata',
                     'add_chapters': True,
                     'add_metadata': True, # Also embeds title, artist, etc.
@@ -2309,14 +2345,16 @@ def download_thread(url: str, build_fn: dict, button_index: int):
             })
         else:
             ydl_opts.update({
-                "format": "bestaudio/best",
-                "postprocessors": [{"key":
-                    "FFmpegExtractAudio",
+                'final_ext': 'mp3',
+                "format": "ba[acodec^=mp3]/ba/b",
+                "postprocessors": [{
+                    "key": "FFmpegExtractAudio",
+                    'nopostoverwrites': False,
                     "preferredcodec": "mp3",
                     "preferredquality": "0",
                 }],
             })
-        if "_playlist" in build_fn.__name__: ydl_opts['yes_playlist'] = True
+        # if "_playlist" in build_fn.__name__: ydl_opts['yes_playlist'] = True  # there's no 'yes_playlist' in ydl_opts, and --yes-playlist is by default
         
         # Perform the download
         with ytdlp.YoutubeDL(ydl_opts) as ydl:
@@ -2508,6 +2546,7 @@ if player:
 check_gui_queue()
 apply_theme()  # Apply the default theme (dark) at startup
 root.mainloop()
+
 
 
 
