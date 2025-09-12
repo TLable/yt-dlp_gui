@@ -1190,7 +1190,7 @@ def _base_cmd(url: str, *, playlist_title: bool = False,
         "--sponsorblock-remove", "sponsor",
         "--ignore-errors",
         "--http-header", "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
-        "--extractor-args", "youtube:player_client=android",
+        "--extractor-args", "youtube:player_client=web",
     ]
     # Handle playlists
     if not playlist_title:
@@ -1892,7 +1892,7 @@ def download(url: str, out_template: str):
         "ignoreerrors": True,
         "embed-thumbnail": True,
         "embed-chapters": True,
-        "extractor-args": "youtube:player_client=android",
+        "extractor-args": "youtube:player_client=web",
     }
 
     with ytdlp.YoutubeDL(ydl_opts) as ydl:
@@ -2289,7 +2289,7 @@ def download_thread(url: str, build_fn: dict, button_index: int):
             "embed-thumbnail": True,
             "no-mtime": True,
             "http_headers": {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36"},
-            "extractor-args": {"youtube": {"player_client": "android"}},
+            "extractor-args": {"youtube": {"player_client": "web"}},
         }
         if current_is_video:
             selected_height = max_resolution.get()
@@ -2507,6 +2507,7 @@ if player:
 check_gui_queue()
 apply_theme()  # Apply the default theme (dark) at startup
 root.mainloop()
+
 
 
 
