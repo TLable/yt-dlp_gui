@@ -1179,7 +1179,7 @@ def _base_cmd(url: str, *, playlist_title: bool = False,
             "-f", "bestaudio/best",
             "--extract-audio",
             "--audio-format", "mp3",
-            "--audio-quality", "192",
+            "--audio-quality", "0",
         ]
 
     # --- Common options ---
@@ -2313,7 +2313,7 @@ def download_thread(url: str, build_fn: dict, button_index: int):
                 "postprocessors": [{"key":
                     "FFmpegExtractAudio",
                     "preferredcodec": "mp3",
-                    "preferredquality": "192",
+                    "preferredquality": "0",
                 }],
             })
         if "_playlist" in build_fn.__name__: ydl_opts['yes_playlist'] = True
@@ -2508,5 +2508,6 @@ if player:
 check_gui_queue()
 apply_theme()  # Apply the default theme (dark) at startup
 root.mainloop()
+
 
 
