@@ -9,8 +9,7 @@ a = Analysis(
     binaries=[],
     datas=[
         ('requirements.txt', '.'), 
-        ('config.json', '.'), 
-        ('cookies.txt','.'),
+        ('config.json', '.'),
         ('Readme.txt', '.'), 
         ('Readme.md', '.'), 
         ('yt download err Icons', 'yt download err Icons'),
@@ -67,4 +66,5 @@ app = BUNDLE(
     name='yt-dlp_gui',
     icon='yt download err Icons\\YouTube2Media1AV 2A.ico',
 )
+
 
