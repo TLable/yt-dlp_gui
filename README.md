@@ -11,26 +11,29 @@ making it easy for users to manage their downloads without needing to use the te
 <b>Installation:</b> (using single terminal/powershell line)<br/>
 ...in cmd line run 'python -m PyInstaller yt-dlp_gui.spec'...<br/>
 <div style="text-align: center;">
-  <span>Step One:<br/></span>
+  <span>Step One:</span>
   <hr style="width: 50%; margin: 5px auto; border: 1px solid black;">
-</div>
+</div><br/>
 ∙simply download the files in the list above place them inside Your profiles documents<br/> 
 in a folder named yt-dlp "%USERPROFILE%\Documents\yt-dlp"<br/>
+
 <div style="text-align: center;">
-  <span>Step Two:<br/></span>
+  <span>Step Two:</span>
   <hr style="width: 50%; margin: 5px auto; border: 1px solid black;">
-</div>
+</div><br/>
 ∙open terminal & navigate to that yt-dlp dir<br/>
+
 <div style="text-align: center;">
-  <span>Step Three:<br/></span>
+  <span>Step Three:</span>
   <hr style="width: 50%; margin: 5px auto; border: 1px solid black;">
-</div>
+</div>:<br/>
 ∙run line 'python -m PyInstaller yt-dlp_gui.spec'<br/>
 ∙if it required pyinstaller, first run 'pip install pyinstaller' then the cmd line above.<br/>
+
 <div style="text-align: center;">
-  <span>Step Four:<br/></span>
+  <span>Step Four:</span>
   <hr style="width: 50%; margin: 5px auto; border: 1px solid black;">
-</div>
+</div><br/>
 ∙Navigate to the new dist folder in the yt-dlp folder, then the exe is in the yt-dlp_gui folder.<br/>
 ∙placed "%USERPROFILE%\Documents\yt-dlp\dist\yt-dlp_gui"<br/>
 <p/>
