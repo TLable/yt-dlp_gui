@@ -16,20 +16,23 @@ making it easy for users to manage their downloads without needing to use the te
 </div><br/>
 ∙simply download the files in the list above place them inside Your profiles documents<br/> 
 in a folder named yt-dlp "%USERPROFILE%\Documents\yt-dlp"<br/>
-
+</p>
+<p>
 <div style="text-align: center;">
   <span>Step Two:</span>
   <hr style="width: 50%; margin: 5px auto; border: 1px solid black;">
 </div><br/>
 ∙open terminal & navigate to that yt-dlp dir<br/>
-
+</p>
+<p>
 <div style="text-align: center;">
   <span>Step Three:</span>
   <hr style="width: 50%; margin: 5px auto; border: 1px solid black;">
 </div>:<br/>
 ∙run line 'python -m PyInstaller yt-dlp_gui.spec'<br/>
 ∙if it required pyinstaller, first run 'pip install pyinstaller' then the cmd line above.<br/>
-
+</p>
+<p>
 <div style="text-align: center;">
   <span>Step Four:</span>
   <hr style="width: 50%; margin: 5px auto; border: 1px solid black;">
@@ -38,7 +41,7 @@ in a folder named yt-dlp "%USERPROFILE%\Documents\yt-dlp"<br/>
 ∙placed "%USERPROFILE%\Documents\yt-dlp\dist\yt-dlp_gui"<br/>
 <p/>
 enjoy yt-dlp_gui.exe<br/>
-
+</p>
 **<b>OR</b>** <br/>
 download latest release zip file. Only available for windows x64 OS currently. <br/>
 When figure how to offer for mobile macOS and x32bit OS those may become available. Until then:<br/>
