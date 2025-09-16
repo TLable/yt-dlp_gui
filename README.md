@@ -4,7 +4,7 @@ A user-friendly desktop application for Windows that provides a graphical interf
 **Installation:**
 simply download the files to "%USERPROFILE%\Documents\yt-dlp"
 open terminal and navigate to that dir
-in cmd line run 'python -m PyInstaller launcher.spec'
+in cmd line run 'python -m PyInstaller yt-dlp_gui.spec'
 install's inside same dir to ..\yt-dlp_gui\dist\
 enjoy yt-dlp_gui.exe
 
