@@ -1,20 +1,24 @@
-<p>
+
 <b>yt-dlp_gui</b><br/>
-A user-friendly desktop application for Windows that provides a graphical interface for downloading YouTube videos &amp; playlists<br/> 
-as either MP3 audio or MP4 video. This application acts as a visual wrapper for the powerful `yt-dlp` command-line tool, <br/>
+<p>
+A user-friendly desktop application for Windows that provides a graphical interface for downloading 
+YouTube videos &amp; playlists as either MP3 audio or MP4 video. <br/>
+This application acts as a visual wrapper for the powerful `yt-dlp` command-line tool, <br/>
 making it easy for users to manage their downloads without needing to use the terminal.
 <p/>
 
 <p>
 <b>Installation:</b> (using single terminal/powershell line)<br/>
 ...in cmd line run 'python -m PyInstaller yt-dlp_gui.spec'...<br/>
-Step One:<br/>
-∙simply download the files in the list above place them inside Your profiles documents in a folder named yt-dlp "%USERPROFILE%\Documents\yt-dlp"<br/>
-Step Two:<br/>
+<p style="display: inline-block; border-bottom: 2px solid black;">Step One</p>p>:<br/>
+∙simply download the files in the list above place them inside Your profiles documents<br/> 
+in a folder named yt-dlp "%USERPROFILE%\Documents\yt-dlp"<br/>
+<p style="display: inline-block; border-bottom: 2px solid black;">Step Two</p>:<br/>
 ∙open terminal & navigate to that yt-dlp dir<br/>
-Step Three: run line 'python -m PyInstaller yt-dlp_gui.spec'<br/>
+<p style="display: inline-block; border-bottom: 2px solid black;">Step Three</p>:<br/>
+∙run line 'python -m PyInstaller yt-dlp_gui.spec'<br/>
 ∙if it required pyinstaller, first run 'pip install pyinstaller' then the cmd line above.<br/>
-Step Four:<br/>
+<p style="display: inline-block; border-bottom: 2px solid black;">Step Four</p>:<br/>
 ∙Navigate to the new dist folder in the yt-dlp folder, then the exe is in the yt-dlp_gui folder.<br/>
 ∙placed "%USERPROFILE%\Documents\yt-dlp\dist\yt-dlp_gui"<br/>
 <p/>
